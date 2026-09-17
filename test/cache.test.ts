@@ -38,6 +38,39 @@ afterEach(() => {
 });
 
 describe("quota cache", () => {
+  it("preserves Kiro snapshots on unavailable evidence and clears only explicit fresh empty usage", () => {
+    useTempCache();
+    const kiro = quota("kiro", 25);
+    kiro.source = "cli-rpc";
+    kiro.windows = [
+      {
+        id: "usage:1",
+        label: "credits",
+        kind: "credits",
+        percentUsed: 25,
+        percentRemaining: 75,
+        resetText: "2026-10-01",
+      },
+    ];
+    writeCachedProviders([kiro]);
+    expect(readCachedProvider("kiro")?.windows).toEqual(kiro.windows);
+    expect(statSync(cacheFilePath()).mode & 0o777).toBe(0o600);
+    writeCachedProviders([
+      {
+        ...kiro,
+        windows: [],
+        state: {
+          ...kiro.state,
+          status: "unavailable",
+          error: "kiro_usage_unmeasured",
+        },
+      },
+    ]);
+    expect(readCachedProvider("kiro")?.windows).toEqual(kiro.windows);
+    writeCachedProviders([{ ...kiro, windows: [] }]);
+    expect(readCachedProvider("kiro")).toBeUndefined();
+  });
+
   it("ignores malformed matching entries", () => {
     useTempCache();
     const file = cacheFilePath();

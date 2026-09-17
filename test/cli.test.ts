@@ -24,6 +24,7 @@ const originalZaiProvider = PROVIDERS.zai;
 const originalAgyProvider = PROVIDERS.agy;
 const originalAlibabaProvider = PROVIDERS.alibaba;
 const originalOpenCodeGoProvider = PROVIDERS["opencode-go"];
+const originalKiroProvider = PROVIDERS.kiro;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
 const originalCodexHome = process.env.CODEX_HOME;
@@ -40,6 +41,7 @@ afterEach(() => {
   PROVIDERS.agy = originalAgyProvider;
   PROVIDERS.alibaba = originalAlibabaProvider;
   PROVIDERS["opencode-go"] = originalOpenCodeGoProvider;
+  PROVIDERS.kiro = originalKiroProvider;
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalClaudeConfigDir === undefined)
@@ -66,6 +68,7 @@ describe("CLI flag parsing", () => {
       "agy",
       "alibaba",
       "opencode-go",
+      "kiro",
     ]);
   });
 
@@ -103,6 +106,7 @@ describe("CLI flag parsing", () => {
           "agy",
           "alibaba",
           "opencode-go",
+          "kiro",
         ],
         json: true,
         full: true,
@@ -869,6 +873,18 @@ describe("CLI quota rendering", () => {
 });
 
 describe("default TOON decision blocks", () => {
+  it("accepts the Kiro selector and reports native transport as unavailable", async () => {
+    useTempCache();
+    PROVIDERS.kiro = providerWithQuota(unavailableKiroQuota());
+    const output = await capture(["--provider", "kiro"]);
+    expect(toonRows(output, "quota")).toEqual([]);
+    expect(output).toContain("kiro_transport_unverified");
+    expect(toonRows(output, "attention").some((row) => row[0] === "kiro")).toBe(
+      true,
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
   it("names every requested provider in quota[] or attention[]", async () => {
     useTempCache();
     PROVIDERS.claude = providerWithQuota(freshClaudeQuota());
@@ -884,6 +900,7 @@ describe("default TOON decision blocks", () => {
     PROVIDERS.agy = providerWithQuota(unavailableAgyQuota());
     PROVIDERS.alibaba = providerWithQuota(freshAlibabaQuota());
     PROVIDERS["opencode-go"] = providerWithQuota(freshOpenCodeGoQuota());
+    PROVIDERS.kiro = providerWithQuota(unavailableKiroQuota());
 
     const output = await capture([]);
     const named = new Set([
@@ -900,6 +917,7 @@ describe("default TOON decision blocks", () => {
       "cursor",
       "grok",
       "kimi",
+      "kiro",
       "opencode-go",
       "zai",
     ]);
@@ -1258,6 +1276,7 @@ describe("CLI plumbing via the axi SDK", () => {
     PROVIDERS.agy = providerWithAuth("agy", "Antigravity");
     PROVIDERS.alibaba = providerWithAuth("alibaba", "Alibaba Coding Plan");
     PROVIDERS["opencode-go"] = providerWithAuth("opencode-go", "OpenCode Go");
+    PROVIDERS.kiro = providerWithAuth("kiro", "Kiro CLI V3");
 
     const output = await capture(["--allow-keychain-prompt", "auth"]);
     expect(output).toContain(
@@ -1885,5 +1904,20 @@ function codexBoundConflictQuota(): ProviderQuota {
       },
     ],
     state: { status: "fresh", stale: false, sourcesTried: ["cli-rpc"] },
+  };
+}
+
+function unavailableKiroQuota(): ProviderQuota {
+  return {
+    provider: "kiro",
+    label: "Kiro CLI V3",
+    source: "unavailable",
+    windows: [],
+    state: {
+      status: "unavailable",
+      stale: false,
+      sourcesTried: ["kiro-v3-acp"],
+      error: "kiro_transport_unverified",
+    },
   };
 }

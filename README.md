@@ -305,21 +305,21 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 
 ### Flags
 
-| Flag                                                                           | Description                                                               |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| `--provider claude,codex,cursor,copilot,grok,kimi,zai,agy,alibaba,opencode-go` | Scope providers                                                           |
-| `--json`                                                                       | Emit normalized JSON instead of TOON for quota, auth, or models           |
-| `--full`                                                                       | Include audit and derivation details                                      |
-| `--tui`                                                                        | Render the live human terminal report instead of TOON (quota only)        |
-| `--refresh 30s\|5m\|1h`                                                        | Live `--tui` refresh interval, default 5m (30s-24h)                       |
-| `--once`                                                                       | Render one `--tui` frame and exit instead of staying live                 |
-| `--allow-keychain-prompt`                                                      | Permit macOS provider Keychain access that could prompt                   |
-| `--no-credential-refresh`                                                      | Never run a vendor CLI's own non-interactive credential refresh           |
-| `--profile-only`                                                               | Read one explicitly selected Claude or Codex credential file (quota only) |
-| `--intelligence high\|medium\|low`                                             | Filter `models` by editorial intelligence bucket                          |
-| `--sort runway`                                                                | Explicitly sort `models` by documented usable-runway evidence             |
-| `-h`, `--help`                                                                 | Print terse [AXI](https://axi.md) help                                    |
-| `-v`, `-V`, `--version`                                                        | Print version                                                             |
+| Flag                                                                                | Description                                                               |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `--provider claude,codex,cursor,copilot,grok,kimi,zai,agy,alibaba,opencode-go,kiro` | Scope providers; Kiro native transport is not accepted yet                |
+| `--json`                                                                            | Emit normalized JSON instead of TOON for quota, auth, or models           |
+| `--full`                                                                            | Include audit and derivation details                                      |
+| `--tui`                                                                             | Render the live human terminal report instead of TOON (quota only)        |
+| `--refresh 30s\|5m\|1h`                                                             | Live `--tui` refresh interval, default 5m (30s-24h)                       |
+| `--once`                                                                            | Render one `--tui` frame and exit instead of staying live                 |
+| `--allow-keychain-prompt`                                                           | Permit macOS provider Keychain access that could prompt                   |
+| `--no-credential-refresh`                                                           | Never run a vendor CLI's own non-interactive credential refresh           |
+| `--profile-only`                                                                    | Read one explicitly selected Claude or Codex credential file (quota only) |
+| `--intelligence high\|medium\|low`                                                  | Filter `models` by editorial intelligence bucket                          |
+| `--sort runway`                                                                     | Explicitly sort `models` by documented usable-runway evidence             |
+| `-h`, `--help`                                                                      | Print terse [AXI](https://axi.md) help                                    |
+| `-v`, `-V`, `--version`                                                             | Print version                                                             |
 
 ### Profile-only quota reads
 
@@ -651,6 +651,34 @@ Auth source entries can include `credentialPresent` when a source is not genuine
 The Claude and Codex rows describe default discovery; [`--profile-only`](#profile-only-quota-reads) narrows each to the one selected credential file.
 
 ### Provider notes
+
+**Kiro CLI V3 (transport pending)**
+
+`--provider kiro` discovers `kiro-cli` on `PATH`. Discovery does not prove
+authentication or collect quota. The default adapter reports
+`kiro_transport_unverified` when the executable exists and
+`kiro_cli_unavailable` when it is absent. Auth inspection reports `skipped`
+or `missing`. quota-axi does not launch Kiro or read Kiro credentials.
+`--no-credential-refresh` reports `kiro_refresh_disabled` when the executable
+exists. Profile-only calls remain unsupported for Kiro.
+
+The internal ACP reader requires an injected process launcher. Mocked tests
+cover its two fixed requests, 15-second wait, 1 MiB response limit, and
+retained child ownership after failures. The reader sends no termination
+signal and does not close a pending child's pipes. Native default wiring
+remains disabled until startup and child-lifetime acceptance pass.
+
+The parser and existing JSON, TOON, cache, and TUI owners have deterministic
+mocked-transport coverage. The parser uses the vendor's native V3 ACP usage
+result. Used credits divided by their allowance give used percent; remaining
+percent follows the same arithmetic as other providers. Plan, bonus, and
+add-on meters stay separate. Unknown relationships have no combined bound,
+runway, or selection signal. Date-only reset text and rounded expiry days do
+not supply reset timestamps or cycle durations.
+
+Live collection is not implemented. See the
+[transport assessment](docs/kiro-v3-transport-assessment.md) for vendor
+provenance, startup and refresh blockers, and remaining acceptance checks.
 
 **Claude**
 
