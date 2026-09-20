@@ -1,6 +1,12 @@
 import * as processUtils from "../lib/process.js";
+import { readCachedProvider as readCachedProviderFromDisk } from "../cache.js";
 import type { ProviderAdapter, ProviderQuota, QuotaWindow } from "../types.js";
-import { failedProvider, successProvider, withRemaining } from "./common.js";
+import {
+  failedProvider,
+  staleFromCache,
+  successProvider,
+  withRemaining,
+} from "./common.js";
 import { KiroCliError } from "./kiro-cli.js";
 
 const SOURCE = "kiro-v3-acp";
@@ -8,8 +14,9 @@ const LABEL = "Kiro CLI V3";
 
 type KiroDependencies = {
   findCommandPath: typeof processUtils.findCommandPath;
-  /** Test seam only. Native startup and refresh safety are not accepted yet. */
+  /** Test seam only. Default launch remains blocked on task coexistence. */
   readUsage?: (commandPath: string) => Promise<unknown>;
+  readCachedProvider: typeof readCachedProviderFromDisk;
   now: () => number;
 };
 
@@ -18,6 +25,7 @@ export function createKiroAdapter(
 ): ProviderAdapter {
   const dependencies: KiroDependencies = {
     findCommandPath: (...args) => processUtils.findCommandPath(...args),
+    readCachedProvider: readCachedProviderFromDisk,
     now: Date.now,
     ...overrides,
   };
@@ -43,14 +51,20 @@ export function createKiroAdapter(
       try {
         raw = await dependencies.readUsage(commandPath);
       } catch (error) {
-        return unavailable(
+        return unavailableWithCache(
+          dependencies,
           error instanceof KiroCliError ? error.code : "kiro_usage_failed",
           "failed",
         );
       }
       try {
         const normalized = normalizeKiroUsage(raw);
-        if (!normalized) return unavailable("kiro_usage_unmeasured", "skipped");
+        if (!normalized)
+          return unavailableWithCache(
+            dependencies,
+            "kiro_usage_unmeasured",
+            "skipped",
+          );
         return successProvider({
           provider: "kiro",
           label: LABEL,
@@ -62,7 +76,11 @@ export function createKiroAdapter(
           attempts: [{ source: SOURCE, status: "success" }],
         });
       } catch {
-        return unavailable("kiro_usage_malformed", "failed");
+        return unavailableWithCache(
+          dependencies,
+          "kiro_usage_malformed",
+          "failed",
+        );
       }
     },
     async inspectAuth() {
@@ -93,6 +111,18 @@ export function createKiroAdapter(
 }
 
 export const kiroAdapter = createKiroAdapter();
+
+function unavailableWithCache(
+  dependencies: KiroDependencies,
+  error: string,
+  status: "failed" | "skipped",
+): ProviderQuota {
+  const attempt = { source: SOURCE, status, error } as const;
+  const cached = dependencies.readCachedProvider("kiro");
+  return cached
+    ? staleFromCache(cached, error, [SOURCE], [attempt])
+    : unavailable(error, status);
+}
 
 function unavailable(
   error: string,

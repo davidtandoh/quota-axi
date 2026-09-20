@@ -36,7 +36,27 @@ function harness() {
     expect(destroyInput).not.toHaveBeenCalled();
     expect(destroyOutput).not.toHaveBeenCalled();
   };
-  return { process, write, spawn, reader, send, initialize, untouched };
+  const closedNormally = () => {
+    expect(process.kill).not.toHaveBeenCalled();
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(destroyInput).not.toHaveBeenCalled();
+    expect(destroyOutput).not.toHaveBeenCalled();
+  };
+  const close = (code = 0, signal: NodeJS.Signals | null = null) => {
+    process.emit("exit", code, signal);
+    process.emit("close", code, signal);
+  };
+  return {
+    process,
+    write,
+    spawn,
+    reader,
+    send,
+    initialize,
+    untouched,
+    closedNormally,
+    close,
+  };
 }
 
 describe("Kiro fixed ACP exchange (mock child only)", () => {
@@ -88,7 +108,6 @@ describe("Kiro fixed ACP exchange (mock child only)", () => {
     const split = bytes.indexOf(Buffer.from("£")) + 1;
     h.process.stdout.write(bytes.subarray(0, split));
     h.process.stdout.write(bytes.subarray(split));
-    await expect(result).resolves.toEqual(usage);
     expect(
       h.write.mock.calls.map(([line]) => JSON.parse(String(line))),
     ).toEqual([
@@ -100,12 +119,14 @@ describe("Kiro fixed ACP exchange (mock child only)", () => {
       },
       { jsonrpc: "2.0", id: 1, method: "_kiro/account/getUsage", params: {} },
     ]);
-    h.untouched();
+    h.closedNormally();
     await expect(h.reader("/synthetic/other-cli")).rejects.toThrow(
       "kiro_usage_pending",
     );
     expect(h.spawn).toHaveBeenCalledTimes(1);
-    h.process.emit("exit", 0, null);
+    h.process.stdout.emit("end");
+    h.close();
+    await expect(result).resolves.toEqual(usage);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -125,12 +146,63 @@ describe("Kiro fixed ACP exchange (mock child only)", () => {
       "kiro_usage_pending",
     );
     h.untouched();
-    h.process.emit("exit", 0, null);
+    h.close();
     const retry = h.reader("/synthetic/kiro-cli");
     const retryFailure = expect(retry).rejects.toThrow("kiro_usage_failed");
     expect(h.spawn).toHaveBeenCalledTimes(2);
-    h.process.emit("exit", 1, null);
+    h.close(1);
     await retryFailure;
+  });
+
+  it("requires clean exit and stream close after a valid response", async () => {
+    const h = harness();
+    const result = h.reader("/synthetic/kiro-cli");
+    const rejection = expect(result).rejects.toThrow("kiro_usage_failed");
+    h.initialize();
+    h.send({ jsonrpc: "2.0", id: 1, result: { success: true } });
+    h.closedNormally();
+    await expect(h.reader("/synthetic/kiro-cli")).rejects.toThrow(
+      "kiro_usage_pending",
+    );
+    h.close(1);
+    await rejection;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("retains ownership after clean exit until streams close", async () => {
+    const h = harness();
+    const settled = vi.fn();
+    const result = h.reader("/synthetic/kiro-cli");
+    void result.then(settled, settled);
+    h.initialize();
+    h.send({ jsonrpc: "2.0", id: 1, result: { success: true } });
+    h.closedNormally();
+
+    h.process.emit("exit", 0, null);
+    await Promise.resolve();
+
+    expect(settled).not.toHaveBeenCalled();
+    await expect(h.reader("/synthetic/kiro-cli")).rejects.toThrow(
+      "kiro_usage_pending",
+    );
+    h.process.emit("close", 0, null);
+    await expect(result).resolves.toEqual({ success: true });
+    expect(settled).toHaveBeenCalledExactlyOnceWith({ success: true });
+  });
+
+  it("keeps the total wait bound after a valid response", async () => {
+    const h = harness();
+    const result = h.reader("/synthetic/kiro-cli");
+    const rejection = expect(result).rejects.toThrow("kiro_usage_timed_out");
+    h.initialize();
+    h.send({ jsonrpc: "2.0", id: 1, result: { success: true } });
+    h.closedNormally();
+    await vi.advanceTimersByTimeAsync(15_000);
+    await rejection;
+    await expect(h.reader("/synthetic/kiro-cli")).rejects.toThrow(
+      "kiro_usage_pending",
+    );
+    h.close();
   });
 
   it.each([
@@ -195,7 +267,7 @@ describe("Kiro fixed ACP exchange (mock child only)", () => {
     expect(h.spawn).toHaveBeenCalledTimes(1);
     expect(h.write).toHaveBeenCalledTimes(1);
     h.untouched();
-    h.process.emit("exit", 1, null);
+    h.close(1);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -208,7 +280,7 @@ describe("Kiro fixed ACP exchange (mock child only)", () => {
     h.process.stdout.write(Buffer.alloc(512 * 1024, 32));
     await rejected;
     h.untouched();
-    h.process.emit("exit", 0, null);
+    h.close();
   });
 
   it("redacts synchronous spawn failures without claiming a pending child", async () => {
@@ -259,9 +331,9 @@ describe("Kiro fixed ACP exchange (mock child only)", () => {
     );
     replacement.initialize();
     replacement.send({ jsonrpc: "2.0", id: 1, result: { success: true } });
+    replacement.closedNormally();
+    replacement.close();
     await expect(retry).resolves.toEqual({ value: { success: true } });
-    replacement.untouched();
-    replacement.process.emit("exit", 0, null);
     expect(vi.getTimerCount()).toBe(0);
   });
 

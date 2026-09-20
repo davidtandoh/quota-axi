@@ -4,7 +4,8 @@ import {
   createKiroAdapter,
   normalizeKiroUsage,
 } from "../../src/providers/kiro.js";
-import type { ProviderOptions } from "../../src/types.js";
+import { KiroCliError } from "../../src/providers/kiro-cli.js";
+import type { ProviderOptions, ProviderQuota } from "../../src/types.js";
 
 const options: ProviderOptions = {
   allowKeychainPrompt: false,
@@ -35,6 +36,30 @@ function usage() {
       addOnCredits: [
         { used: 5, total: 50, isActive: false, expiresAt: "Oct 1, 2026" },
       ],
+    },
+  };
+}
+
+function cachedQuota(): ProviderQuota {
+  return {
+    provider: "kiro",
+    label: "Kiro CLI V3",
+    source: "cli-rpc",
+    windows: [
+      {
+        id: "usage:1",
+        label: "credits",
+        kind: "credits",
+        percentUsed: 25,
+        percentRemaining: 75,
+        resetText: "2026-10-01",
+      },
+    ],
+    state: {
+      status: "fresh",
+      stale: false,
+      refreshedAt: generatedAt,
+      sourcesTried: ["kiro-v3-acp"],
     },
   };
 }
@@ -226,6 +251,7 @@ describe("Kiro provider acceptance boundary", () => {
       const adapter = createKiroAdapter({
         findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
         readUsage: vi.fn().mockResolvedValue(raw),
+        readCachedProvider: vi.fn(),
       });
       expect(await adapter.fetchQuota(options)).toMatchObject({
         windows: [],
@@ -238,6 +264,7 @@ describe("Kiro provider acceptance boundary", () => {
     const adapter = createKiroAdapter({
       findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
       readUsage: vi.fn().mockRejectedValue(new Error("private token: example")),
+      readCachedProvider: vi.fn(),
     });
     const quota = await adapter.fetchQuota(options);
     expect(quota.state).toMatchObject({
@@ -246,5 +273,75 @@ describe("Kiro provider acceptance boundary", () => {
     });
     expect(JSON.stringify(quota)).not.toContain("private token");
     expect(quota.state.authStatus).toBeUndefined();
+  });
+
+  it.each([
+    [undefined, "kiro_usage_malformed", "failed"],
+    [
+      { success: false, message: "Authentication required: private detail" },
+      "kiro_usage_unmeasured",
+      "skipped",
+    ],
+  ])(
+    "reports cached Kiro data as stale after %s evidence",
+    async (raw, error, attemptStatus) => {
+      const cached = cachedQuota();
+      const adapter = createKiroAdapter({
+        findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
+        readUsage: vi.fn().mockResolvedValue(raw),
+        readCachedProvider: vi.fn().mockReturnValue(cached),
+      });
+
+      const quota = await adapter.fetchQuota(options);
+
+      expect(quota).toMatchObject({
+        source: "cache",
+        windows: cached.windows,
+        state: {
+          status: "stale",
+          stale: true,
+          error,
+          refreshedAt: generatedAt,
+          sourcesTried: ["kiro-v3-acp", "cache"],
+        },
+        attempts: [
+          {
+            source: "kiro-v3-acp",
+            status: attemptStatus,
+            error,
+          },
+        ],
+      });
+      expect(quota.state.authStatus).toBeUndefined();
+      expect(JSON.stringify(quota)).not.toContain("private detail");
+    },
+  );
+
+  it("reports cached Kiro data as stale after a bounded reader failure", async () => {
+    const cached = cachedQuota();
+    const adapter = createKiroAdapter({
+      findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
+      readUsage: vi
+        .fn()
+        .mockRejectedValue(new KiroCliError("kiro_usage_timed_out")),
+      readCachedProvider: vi.fn().mockReturnValue(cached),
+    });
+
+    expect(await adapter.fetchQuota(options)).toMatchObject({
+      source: "cache",
+      windows: cached.windows,
+      state: {
+        status: "stale",
+        stale: true,
+        error: "kiro_usage_timed_out",
+      },
+      attempts: [
+        {
+          source: "kiro-v3-acp",
+          status: "failed",
+          error: "kiro_usage_timed_out",
+        },
+      ],
+    });
   });
 });

@@ -30,7 +30,7 @@ type Dependencies = {
   env: NodeJS.ProcessEnv;
 };
 
-/** Fixed ACP exchange only. Native lifecycle acceptance remains outstanding. */
+/** Fixed ACP exchange only. Native launch binding remains outstanding. */
 export function createKiroCliReader(dependencies: Dependencies) {
   let pending: ChildProcess | undefined;
   return (commandPath: string): Promise<unknown> => {
@@ -57,6 +57,12 @@ export function createKiroCliReader(dependencies: Dependencies) {
       let spawned = child.pid !== undefined;
       let failedSpawn = false;
       let settled = false;
+      let responseReceived = false;
+      let response: unknown;
+      let sawExit = false;
+      let sawClose = false;
+      let exitCode: number | null = null;
+      let exitSignal: NodeJS.Signals | null = null;
       let expectedId = 0;
       let bytes = 0;
       let buffer = "";
@@ -70,12 +76,23 @@ export function createKiroCliReader(dependencies: Dependencies) {
         clearTimeout(timer);
         if (error) reject(new KiroCliError(error));
         else resolve(result);
-        // Keep draining stdout and retain ownership until observed exit,
-        // or close after a confirmed failure to create a process.
-        // Closing stdin/pipes or signaling could interrupt vendor refresh.
+        // Retain ownership until both process exit and stream close are
+        // observed, or close after a confirmed failure to create a process.
       }
       function fail(error: Failure) {
         finish(error);
+      }
+      function maybeComplete() {
+        if (failedSpawn && !spawned && child.pid === undefined && sawClose) {
+          if (pending === child) pending = undefined;
+          fail("kiro_usage_failed");
+          return;
+        }
+        if (!sawExit || !sawClose) return;
+        if (pending === child) pending = undefined;
+        if (responseReceived && exitCode === 0 && exitSignal === null)
+          finish(undefined, response);
+        else fail("kiro_usage_failed");
       }
       function send(id: number, method: string, params: object) {
         try {
@@ -121,12 +138,24 @@ export function createKiroCliReader(dependencies: Dependencies) {
             return fail("kiro_usage_protocol_error");
           expectedId = 1;
           send(1, "_kiro/account/getUsage", {});
-        } else finish(undefined, message.result);
+        } else {
+          response = message.result;
+          responseReceived = true;
+          buffer = "";
+          try {
+            if (!child.stdin) return fail("kiro_usage_failed");
+            child.stdin.end();
+          } catch {
+            fail("kiro_usage_failed");
+          }
+        }
       }
 
-      child.on("exit", () => {
-        if (pending === child) pending = undefined;
-        fail("kiro_usage_failed");
+      child.on("exit", (code, signal) => {
+        sawExit = true;
+        exitCode = code;
+        exitSignal = signal;
+        maybeComplete();
       });
       child.on("spawn", () => {
         spawned = true;
@@ -142,21 +171,19 @@ export function createKiroCliReader(dependencies: Dependencies) {
         fail("kiro_usage_failed");
       });
       child.on("close", () => {
-        if (
-          failedSpawn &&
-          !spawned &&
-          child.pid === undefined &&
-          pending === child
-        )
-          pending = undefined;
-        fail("kiro_usage_failed");
+        sawClose = true;
+        if (!sawExit && !(failedSpawn && !spawned && child.pid === undefined))
+          fail("kiro_usage_failed");
+        maybeComplete();
       });
       child.stdin?.on("error", () => fail("kiro_usage_failed"));
       child.stdout?.on("error", () => fail("kiro_usage_failed"));
-      child.stdout?.on("end", () => fail("kiro_usage_failed"));
+      child.stdout?.on("end", () => {
+        if (!responseReceived) fail("kiro_usage_failed");
+      });
       child.stdout?.on("data", (chunk: Buffer) => {
         spawned = true;
-        if (settled) return;
+        if (settled || responseReceived) return;
         bytes += chunk.length;
         if (bytes > MAX_BYTES) return fail("kiro_usage_too_large");
         buffer += decoder.write(chunk);

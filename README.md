@@ -652,7 +652,7 @@ The Claude and Codex rows describe default discovery; [`--profile-only`](#profil
 
 ### Provider notes
 
-**Kiro CLI V3 (transport pending)**
+**Kiro CLI V3 (default launch pending)**
 
 `--provider kiro` discovers `kiro-cli` on `PATH`. Discovery does not prove
 authentication or collect quota. The default adapter reports
@@ -664,9 +664,16 @@ exists. Profile-only calls remain unsupported for Kiro.
 
 The internal ACP reader requires an injected process launcher. Mocked tests
 cover its two fixed requests, 15-second wait, 1 MiB response limit, and
-retained child ownership after failures. The reader sends no termination
-signal and does not close a pending child's pipes. Native default wiring
-remains disabled until startup and child-lifetime acceptance pass.
+retained child ownership after failures. After a valid usage response, the
+reader ends standard input normally and resolves only after process exit 0 and
+stream close. A nonzero exit or lifecycle timeout is a failed read. The reader
+sends no termination signal and does not destroy a pending child's pipes.
+
+An injected accepted reader can reuse an existing Kiro snapshot as explicitly
+stale after a bounded transport failure, malformed response, or opaque vendor
+failure. It does not infer sign-out from private vendor text. Native default
+wiring remains disabled because the supported launcher has no established
+task-home isolation for coexistence with active Kiro tasks.
 
 The parser and existing JSON, TOON, cache, and TUI owners have deterministic
 mocked-transport coverage. The parser uses the vendor's native V3 ACP usage
@@ -676,9 +683,10 @@ add-on meters stay separate. Unknown relationships have no combined bound,
 runway, or selection signal. Date-only reset text and rounded expiry days do
 not supply reset timestamps or cycle durations.
 
-Live collection is not implemented. See the
+Default live collection is not implemented. See the
 [transport assessment](docs/kiro-v3-transport-assessment.md) for vendor
-provenance, startup and refresh blockers, and remaining acceptance checks.
+provenance, current lifecycle evidence, and the remaining task-coexistence
+check.
 
 **Claude**
 

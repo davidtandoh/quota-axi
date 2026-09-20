@@ -258,6 +258,66 @@ review confirmed the normalized arithmetic and observed close. The reviewer
 classified the quota response as successful and the vendor exit as nonzero,
 with production acceptance still outstanding.
 
+### Current 2.22.1 repeat acceptance, 2026-09-20
+
+The current installed frontend is Kiro CLI 2.22.1. The signed `kiro-cli`
+artifact is 102,933,232 bytes with SHA-256
+`c770b9ed9e45c390ccaf6b1072ca4cbe23241161b6ce7ba61b27e328e57c849f`.
+The signed `kiro-cli-chat` artifact is 798,050,864 bytes with SHA-256
+`de55e5d1d9d0e774ff1390c767dd7d923e5729494f032a1996a512a75b2bbf1e`.
+Public UI metadata identifies `@kiro/agent` 0.66.4.
+
+Three sequential account-only ACP exchanges used the same fixed route and
+request pair as the failed 2.22.0 experiment. Each preflight found no active or
+queued Kiro task metadata. Each run sent normal EOF after the valid response,
+sent no signal, and retained ownership through natural process completion.
+
+| Run          | Response | Exit / stream close | Final empty process observation |
+| ------------ | -------: | ------------------: | ------------------------------: |
+| 038          | 1,201 ms |            1,660 ms |                        1,674 ms |
+| 039 repeat 1 | 1,074 ms |            1,514 ms |                        2,043 ms |
+| 039 repeat 2 |   957 ms |            1,417 ms |                        1,438 ms |
+
+All three runs returned the same normalized numeric meter, exited 0, closed
+their streams, and matched no configured engine-exit or authentication-drain
+timeout marker. Preflight and postflight both found the task directory absent.
+The historical 2.22.0 exit-1 evidence remains valid for that version.
+
+The product reader now mirrors the accepted success lifecycle. It sends normal
+EOF after a valid usage response, continues draining, and resolves only after
+exit 0 and stream close. Nonzero exit and lifecycle timeout become unavailable
+or eligible stale evidence. The reader never signals the process. Default
+launch remains unbound.
+
+The remaining native boundary is task coexistence. The supported ACP command
+exposes no task-home selector. `KIRO_HOME` forwarding to the KAS `homeDir` is
+not established, and current KAS 0.66.4 source is unavailable. A synthetic
+home loses the selected vendor login. Copying or reading credentials to combine
+those environments is prohibited. Maintenance-empty runs therefore do not
+prove safe polling while another Kiro task is active.
+
+A real-home disposable fixture would require separate write authority. The
+bounded procedure would create one exclusive, uniquely named synthetic task
+metadata subtree under the real task root, record exact bytes and file modes,
+run one account-only exchange, compare the fixture byte-for-byte, and remove
+only the owned subtree after identity checks. The procedure must abort if any
+unowned task metadata appears or task status is unreadable. No such fixture was
+created in this work.
+
+Vendor token-refresh persistence after a clean vendor exit is residual vendor
+uncertainty. quota-axi's required behavior is narrower: it does not read or
+exchange refresh tokens, does not force expiry, waits for the vendor process to
+exit cleanly before publishing fresh evidence, and reports failures as
+unavailable or stale. Internal token-store inspection is not an acceptance
+requirement.
+
+After task coexistence is resolved, the smallest default-launch change is a
+production factory for the existing reader. The factory must use direct
+shell-free spawn, inherit the selected vendor environment without inspecting
+credentials, select a dedicated empty working directory, and inject the reader
+into `kiroAdapter`. Existing overlap ownership rejects a second poll while the
+first child remains pending.
+
 ### Earlier 2.21.4 research
 
 The native binary embeds a gzip archive at bytes `88048910` through
@@ -360,7 +420,11 @@ proof that credits are unusable, so those packs remain visible. There is no
 combined bound, pace forecast, runway, or selection scalar for unresolved
 pool relationships. No manual balance entry or credential reader was added.
 
-## Remaining native acceptance
+## Historical 2.22.0 acceptance snapshot
+
+The table below records the gate state after the 2.22.0 exit-1 experiment. The
+current 2.22.1 repeat evidence and reader lifecycle section above supersede its
+lifetime and repeatability conclusions. The task-coexistence boundary remains.
 
 | Gate                         | Current evidence and remaining requirement                                                                                                                                                                                                                    |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -370,12 +434,14 @@ pool relationships. No manual balance entry or credential reader was added.
 | D: native lifetime           | One response and EOF close were observed, with exit code 1. Establish its cause and safe auth failure, near-expiry refresh, timeout and parent exit. Token-store completion and descendant cleanup remain unverified. No second native attempt is authorized. |
 | E: selected-account usage    | The single authorized exchange returned measured quota. Compare independently supplied native `/usage` values, arithmetic, unknown resets, failures and TUI output. No comparison was performed in this attempt.                                              |
 
-A-D must pass before native default wiring. Remaining E checks block accepted
-unattended live-collection claims. Routine vendor initialization is not
-automatically prohibited; assess each effect against the least-action policy in VISION.md. The synthetic
-diagnostic guard is not a new production contract. Existing Codex app-server
-behavior differs from rejection-gated delegates and is unchanged here.
-Native worker-adapter verification and the separate scout are independent.
+At that point, A-D had to pass before native default wiring. Current 2.22.1
+evidence passes the happy-path lifetime and sequential-repeat checks. Task
+coexistence still blocks default launch. Routine vendor initialization is not
+automatically prohibited; assess each effect against the least-action policy in
+VISION.md. The synthetic diagnostic guard is not a new production contract.
+Existing Codex app-server behavior differs from rejection-gated delegates and
+is unchanged here. Native worker-adapter verification and the separate scout
+are independent.
 
 ## Delivery and installation scope
 
@@ -386,8 +452,8 @@ Its branch-only `.no-mistakes.yaml` requests GitHub draft creation and changes
 no trusted command or validation policy. The handoff records its exact commit.
 Push, pull request, and no-mistakes validation remain pending. No pipeline run
 was started. The six mocked handler checks are research checks, not collector
-acceptance. Native default collection remains disabled. Further native
-shutdown diagnostics are outside this draft's scope.
+acceptance. Native default collection remains disabled. Current happy-path
+shutdown no longer needs another unchanged live read.
 
 ### Product verification
 
@@ -397,24 +463,21 @@ Focused regression command:
 pnpm exec vitest run test/providers/kiro-cli.test.ts test/providers/kiro.test.ts test/cli.test.ts test/tui.test.ts test/cache.test.ts
 ```
 
-Gate A follow-up result: 168 tests passed across five files, including 45 Kiro tests.
-Independent read-only review found no blocking finding in the mocked,
-native-disabled gate A implementation. The review-noted failed-spawn case
-now has a deterministic fix and permanent regression. Node can report an
-asynchronous failed spawn with `error` and `close`, without `exit`.
-The reader releases that ownership only with positive no-process evidence.
-Live and unknown child counterexamples stay pending. Late events from the
-failed child cannot release a replacement. These deterministic tests launched
-no native child.
-Independent read-only review of the follow-up found no blocking finding.
+Current focused verification passed 66 Kiro provider, lifecycle, and cache
+tests. Independent review confirmed that the reader now sends normal EOF only
+after a valid correlated response, waits for both exit 0 and stream close, and
+keeps timed-out children pending until observed completion. The failed-spawn
+case remains narrowly released only after positive no-process evidence. Late
+events from an old child cannot release a replacement. These deterministic
+tests launched no native child.
 
 The [Node child-process contract](https://nodejs.org/download/release/latest-jod/docs/api/child_process.html#subprocesspid)
 defines missing PID on failed spawn and the spawn/error/close event behavior.
 The [Node 22.23.1 implementation](https://github.com/nodejs/node/blob/v22.23.1/lib/internal/child_process.js)
 identifies asynchronous spawn errors with `syscall: "spawn <executable>"`.
 Those existing process contracts support the narrow exception; a generic
-child error does not establish failed creation. Native lifecycle acceptance
-remains outstanding.
+child error does not establish failed creation. Default native launch remains
+blocked on task coexistence.
 
 Complete gate used the already-installed Node `22.23.1`, with
 `/opt/homebrew/opt/node@22/bin` prepended to PATH. No runtime was installed.
@@ -422,7 +485,7 @@ Complete gate used the already-installed Node `22.23.1`, with
 | Command                           | Result                               |
 | --------------------------------- | ------------------------------------ |
 | `pnpm run build`                  | Passed; also repeated by `pnpm test` |
-| `pnpm test`                       | 1136 tests passed across 51 files    |
+| `pnpm test`                       | 1142 tests passed across 51 files    |
 | `pnpm run lint`                   | Passed                               |
 | `pnpm run format:check`           | Passed                               |
 | `pnpm run build:skill -- --check` | Passed; generated skill unchanged    |
@@ -436,11 +499,11 @@ The worker invoked the already-installed runner directly:
 node node_modules/vitest/vitest.mjs run test/providers/kiro-cli.test.ts test/providers/kiro.test.ts test/cli.test.ts test/tui.test.ts test/cache.test.ts
 ```
 
-Build, lint, full formatting and generated-skill checks also passed.
-Product and test Git blobs match the preserved original branch exactly.
-The prior complete 1136-test result remains evidence for that unchanged code;
-it was not rerun during this documentation/configuration preparation.
-Independent staged-tree review found no privacy or native-binding blocker.
+At the sanitized draft commit, build, lint, full formatting and generated-skill
+checks passed, and product/test Git blobs matched the preserved original branch.
+The current lifecycle and stale-cache changes supersede that unchanged-code
+statement. Independent review of the current slice found no privacy blocker;
+default binding remains withheld.
 
 An initial `pnpm exec` invocation under the empty synthetic home unexpectedly
 attempted pnpm self-installation for the declared version `11.1.1`. The worker
@@ -456,19 +519,19 @@ suite also passed there. The HTTP implementation, its tests, and dependency
 manifests are unchanged. This is a runtime-specific residual limitation, not
 native Kiro acceptance. Hosted CI uses Node 24 and has not run for this slice.
 
-Validate and publish the native-disabled proposal as a draft through the
-existing no-mistakes pipeline to `davidtandoh/quota-axi`, when instructed.
-Preserve the successful one-attempt reading and unexplained vendor exit code 1
-as limitations. A passing draft pipeline does not establish collector
-completion or authorize native wiring. Merge needs a separate grant.
+After the task-coexistence decision and default-launch implementation, validate
+and publish through the existing no-mistakes pipeline to
+`davidtandoh/quota-axi`. Preserve both the historical 2.22.0 exit-1 evidence
+and the current 2.22.1 clean repeats. A passing pipeline does not authorize a
+merge. Merge needs the recorded grant and complete acceptance.
 
 Installation remains a later, separately authorized action. Build an artifact
 from the reviewed commit, test it against synthetic usage output, and then
 complete the remaining V3 acceptance before replacing an installed CLI.
-The single selected-login experiment above does not authorize another native
-attempt or installation. Confirm provider selection, credit arithmetic,
-unknown reset behavior, failure handling, and the existing TUI card. Do not install or release packages
-from this task.
+The third additional read authorized in instruction 039 remains unused. Do not
+spend it on the unchanged happy path. Confirm provider selection, credit
+arithmetic, unknown reset behavior, failure handling, and the existing TUI
+card. Do not install or release packages from this task.
 
 During the assessment formatting check, `pnpm exec` automatically materialized
 the worktree's local development dependencies. No global CLI installation or
