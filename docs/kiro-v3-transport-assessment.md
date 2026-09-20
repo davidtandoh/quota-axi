@@ -1,15 +1,21 @@
 # Kiro V3 quota transport assessment
 
-Assessment updated: 2026-09-17. Target: `kiro-cli --v3`.
+Assessment updated: 2026-09-20. Target: `kiro-cli --v3`.
 
 ## Current result
 
-Evidence establishment under Firstmate instruction `001` found a native,
-session-free V3 usage route in the installed vendor implementation. One
-selected-login experiment under instruction `021` returned measured quota
-through that route. The vendor process closed after normal EOF with exit
-code 1. This establishes a successful quota response, not clean shutdown or
-safe unattended polling.
+The installed Kiro CLI 2.22.1 has a native, session-free V3 usage route. The
+current 2.22.1 repeat acceptance below records three sequential selected-login
+exchanges that returned measured quota, accepted normal EOF, exited 0, closed
+their streams, and left no observed owned process. The route sends only
+`initialize` and `_kiro/account/getUsage`; it sends no session or model request.
+
+A separately approved fixture check then established that the same
+account-only process lifetime removes `running` and `queued` statuses from
+recognized metadata in the shared task root. The supported launcher has no
+established isolated task-home control. This current-version behavior blocks
+safe unattended polling even though quota measurement and normal lifecycle
+now pass.
 
 A parser, executable discovery, provider registration, and presentation slice
 is implemented with mocked transport. The default adapter does not launch
@@ -24,14 +30,16 @@ The reader sends `initialize` (ID 0), then `_kiro/account/getUsage` (ID 1)
 after a matching protocol-version-1 response. It sends no session or
 credential request. The total wait is 15 seconds and the total stdout limit
 is 1 MiB. Errors publish fixed categories. Stderr is discarded. Failed or
-completed reads retain child ownership until observed exit. One exception
+completed reads retain child ownership until observed exit and stream close.
+After a valid usage response, the reader ends standard input normally and
+publishes fresh data only after exit 0 and stream close. One exception
 releases a confirmed failed spawn after `close`: no PID was assigned, no
 successful spawn or stdout activity was observed, and the child emitted a
 structured error identifying the exact spawn syscall. Generic errors or
 pipe closure alone do not release ownership. Pending reads
-do not launch replacements. The reader neither signals the child nor closes
-its pipes. This proves quota-axi behavior with a mock child; it does not
-prove native EOF safety, natural cleanup or bounded parent exit.
+do not launch replacements. The reader never signals the child. Deterministic
+tests establish quota-axi's behavior; the 2.22.1 native runs establish the
+accepted happy-path lifecycle for the installed version.
 
 Provider read-only and profile-only options block the injected reader.
 Auth inspection remains executable discovery only. Remaining native
@@ -40,13 +48,14 @@ claims.
 
 ```text
 Kiro V3 usage route -> quota-axi provider -> existing JSON / TOON / TUI
-   one live response    native default disabled       mock-tested
+ measured and repeatable    native default disabled       mock-tested
+                              task-state blocker
 ```
 
-The native transport must pass the remaining acceptance before quota-axi
-can collect unattended live Kiro quota. Installed executable presence reports
-unavailable, not usable authentication. This slice is not completion of the
-requested collector.
+The native transport must gain safe task coexistence before quota-axi can
+collect unattended live Kiro quota. Installed executable presence reports
+unavailable, not usable authentication. This slice does not complete the
+requested live collector.
 
 ## Public evidence
 
@@ -296,13 +305,86 @@ home loses the selected vendor login. Copying or reading credentials to combine
 those environments is prohibited. Maintenance-empty runs therefore do not
 prove safe polling while another Kiro task is active.
 
-A real-home disposable fixture would require separate write authority. The
-bounded procedure would create one exclusive, uniquely named synthetic task
-metadata subtree under the real task root, record exact bytes and file modes,
-run one account-only exchange, compare the fixture byte-for-byte, and remove
-only the owned subtree after identity checks. The procedure must abort if any
-unowned task metadata appears or task status is unreadable. No such fixture was
-created in this work.
+A separately approved real-home disposable fixture resolved this evidence gap.
+The current runtime recognized the fixture and modified it. The result is a
+task-coexistence failure, not permission to enable the native launch.
+
+### Current 2.22.1 task-coexistence check, 2026-09-20
+
+The bounded canary started with no task root, no active or queued task metadata,
+and no blocking Kiro CLI process. Strict signature checks passed for the same
+2.22.1 artifacts and digests listed above. The canary then created one
+exclusive `0700` subtree under `~/.kiro/tasks` and one `0600`
+`coexistence.meta.json` file. The file contained three synthetic entries:
+
+| Entry       | Status before | Status after | Other observed change |
+| ----------- | ------------- | ------------ | --------------------- |
+| `running`   | `running`     | absent       | `updatedAt` advanced  |
+| `queued`    | `queued`      | absent       | `updatedAt` advanced  |
+| `completed` | `succeed`     | `succeed`    | None                  |
+
+The file changed from 786 bytes with SHA-256
+`539691ab4e8cd482e8a37461410c6422a59864750cd67d882b0c5e7e6635fe22`
+to 714 bytes with SHA-256
+`bbc08540a028ac50b2de81c626d576c230eff6b192da3295b2e988902223b769`.
+The runtime replaced the file inode, changed its mode from `0600` to `0644`,
+removed only the two active statuses, advanced only their timestamps, and
+preserved the completed entry. This selective rewrite is positive
+current-runtime recognition of the fixture format. An unchanged unknown JSON
+file would not have supplied that evidence.
+
+The canary sent only `initialize` and `_kiro/account/getUsage`. It received a
+measured credit window at 3,047 ms. The direct child exited 0 and all streams
+closed at 3,526 ms. No owned process remained at the 3,546 ms observation.
+All 520 stderr bytes were classified, with no configured engine-exit,
+authentication-drain, cleanup, or uncaught-exception marker. No session or
+model request, credential read, signal, retry, installation, or real task edit
+occurred.
+
+The result records `cleanup.attempted` and `cleanup.completed`, with no unowned
+entry observed before cleanup. Postflight found the task root absent with the
+original empty aggregate digest and found no blocking Kiro CLI process.
+
+This check proves that the supported account-only ACP process lifetime in Kiro
+CLI 2.22.1 can clear `running` and `queued` statuses in recognized task
+metadata. It does not isolate the mutation to initialization, usage handling,
+or shutdown. It also does not claim broader task-content corruption or
+characterize every possible concurrent process schedule. The observed action
+is enough to reject unattended shared-home polling. A preflight that sees no
+active task still has a time-of-check/time-of-use race with a task that starts
+before Kiro initialization. Native default binding therefore remains disabled
+until the supported launcher provides an isolated task home or vendor-enforced
+cross-process protection that preserves live task state.
+
+### Supported alternatives and vendor requirement
+
+The gathered evidence contains no supported automatic individual-account
+alternative that is both non-model and non-mutating. The installed 2.22.1
+headless `chat --v3 --no-interactive /usage` candidate returned a
+natural-language refusal and no quota. It does not replace the native account
+RPC.
+
+Kiro's documented enterprise CSV and OpenTelemetry exports provide dated
+historical consumption for administrator-managed organizations. They do not
+provide a fresh individual remaining-credit reading, bonus or add-on balance,
+or exact reset. The documented subscription portal provides a manual usage
+view. A future manual snapshot import would have to remain explicitly dated
+manual evidence; quota-axi must not present it as fresh unattended collection.
+No export or manual-import feature is implemented in this slice.
+
+The smallest actionable vendor requirement is one of these supported
+contracts:
+
+1. An account-only usage mode that does not initialize or rewrite the task
+   subsystem.
+2. A launcher option that moves the task root to an isolated directory while
+   preserving the vendor-selected account and authentication stores.
+3. Vendor-enforced cross-process task ownership that never clears a live
+   task's status.
+
+Until one contract exists and passes native acceptance, the permitted product
+slice is parser, cache-fallback, and dashboard support behind an unbound native
+reader. Installation cannot enable live Kiro collection from this branch.
 
 Vendor token-refresh persistence after a clean vendor exit is residual vendor
 uncertainty. quota-axi's required behavior is narrower: it does not read or
@@ -311,7 +393,7 @@ exit cleanly before publishing fresh evidence, and reports failures as
 unavailable or stale. Internal token-store inspection is not an acceptance
 requirement.
 
-After task coexistence is resolved, the smallest default-launch change is a
+If task coexistence is resolved, the smallest default-launch change is a
 production factory for the existing reader. The factory must use direct
 shell-free spawn, inherit the selected vendor environment without inspecting
 credentials, select a dedicated empty working directory, and inject the reader

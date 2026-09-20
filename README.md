@@ -672,8 +672,12 @@ sends no termination signal and does not destroy a pending child's pipes.
 An injected accepted reader can reuse an existing Kiro snapshot as explicitly
 stale after a bounded transport failure, malformed response, or opaque vendor
 failure. It does not infer sign-out from private vendor text. Native default
-wiring remains disabled because the supported launcher has no established
-task-home isolation for coexistence with active Kiro tasks.
+wiring remains disabled. A bounded Kiro CLI 2.22.1 fixture check confirmed that
+the supported account-only ACP process lifetime removes `running` and `queued`
+execution statuses from recognized metadata under `~/.kiro/tasks`. A task
+preflight cannot close the race with a task that starts after the check. The
+supported launcher has no established task-home isolation or cross-process
+protection.
 
 The parser and existing JSON, TOON, cache, and TUI owners have deterministic
 mocked-transport coverage. The parser uses the vendor's native V3 ACP usage
@@ -685,8 +689,8 @@ not supply reset timestamps or cycle durations.
 
 Default live collection is not implemented. See the
 [transport assessment](docs/kiro-v3-transport-assessment.md) for vendor
-provenance, current lifecycle evidence, and the remaining task-coexistence
-check.
+provenance, current lifecycle evidence, and the confirmed task-coexistence
+blocker.
 
 **Claude**
 
