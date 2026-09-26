@@ -1,8 +1,141 @@
 # Kiro V3 quota transport assessment
 
-Assessment updated: 2026-09-20. Target: `kiro-cli --v3`.
+Assessment updated: 2026-09-26. Target: `kiro-cli --v3` (ACP
+`--agent-engine v3`). Installed version: Kiro CLI 2.24.1.
 
 ## Current result
+
+quota-axi now collects Kiro credits by default, behind a fail-closed idle
+preflight. The earlier task-coexistence blocker is handled by not launching
+Kiro at all unless Kiro is provably idle, because task-root isolation does not
+work on 2.24.1.
+
+```text
+idle preflight ──idle──> kiro-cli acp --agent-engine v3 --auth-method cli
+  │                         initialize + _kiro/account/getUsage only
+  │                         -> credits window, credits.remaining
+  └─busy or unsure──> no launch; unavailable with kiro_busy_* reason
+```
+
+Takeaway: a quota read cannot rewrite a live Kiro task's status, because the
+read never starts while any Kiro process runs or any task is active.
+
+| Question                                             | 2.24.1 answer                                                           |
+| ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| Does `getUsage` still work without a session?        | Yes. 61.22 of 2,000 credits, reset `2026-10-01`, plan `KIRO PRO+`.      |
+| Does `KIRO_HOME=<tmp>` move the V3 task root?        | No. See the isolation test below.                                       |
+| Does authentication survive a relocated `KIRO_HOME`? | Yes. Sign-in lives outside `KIRO_HOME` on macOS.                        |
+| Which flag selects V3 for ACP?                       | `acp --agent-engine v3`. Top-level `--v3` launches chat, not ACP.       |
+| Is native collection enabled by default?             | Yes, only after the idle preflight; `QUOTA_AXI_KIRO_NATIVE=0` opts out. |
+
+### Current 2.24.1 task-root isolation test, 2026-09-26
+
+The installed 2.24.1 artifacts were `kiro-cli` (74,442,736 bytes, SHA-256
+`46b3d4f31e34068b6aa0a4209972656f343e3959615968a52186602dabbd3ac1`) and
+`kiro-cli-chat` (423,583,536 bytes, SHA-256
+`8b9e052cebb595330906caac0a045da58e3af7ad485566cb18e7c4d7b7768d2e`).
+`kiro-cli acp --help` lists `--agent-engine <v2|v1|v3>` (default `v2`) and
+`--auth-method cli`. `kiro-cli --help-all` lists no home or task-root option.
+
+Preflight before the live probe:
+
+1. `~/.kiro/tasks` was absent, so no task was running or queued.
+2. No `kiro-cli` or `kiro-cli-chat` process of the user was running. The
+   desktop companion `kiro_cli_desktop` was running; it does not run tasks.
+
+The probe created a temporary directory, set `KIRO_HOME=<tmp>/.kiro`, and
+seeded `<tmp>/.kiro/tasks/canary/coexistence.meta.json` with three synthetic
+tasks whose `executionStatus` values were `running`, `queued`, and `succeed`.
+This is the file shape that Kiro's startup routine
+`clearAllStaleExecutionStatuses` rewrites. It then ran
+`kiro-cli acp --agent-engine v3 --auth-method cli` with the real user
+environment otherwise, from an empty working directory, and sent only
+`initialize` and `_kiro/account/getUsage`.
+
+| Observation                           | Result                                                       |
+| ------------------------------------- | ------------------------------------------------------------ |
+| Usage response                        | Success at 2,974 ms; one `CREDIT` meter, 61.22 used of 2,000 |
+| Process lifetime                      | Exit 0 at 3,431 ms; streams closed at 3,432 ms               |
+| Stderr                                | 520 bytes; no sign-in, panic, or timeout marker              |
+| Canary under `KIRO_HOME/tasks`        | Unchanged: `running` and `queued` statuses still present     |
+| `KIRO_HOME` contents                  | Gained `settings/cli.json` only                              |
+| Real `~/.kiro/tasks` before and after | Absent before and after; identical snapshot                  |
+| Real `~/.kiro` files written          | A new engine log directory under `~/.kiro/logs/`             |
+| Engine log line                       | `[KiroAgent] Cleared stale task execution statuses`          |
+
+Conclusion: the V3 engine ran its stale-status cleanup, but against the real
+home (`os.homedir()/.kiro/tasks`), not against `KIRO_HOME`. `KIRO_HOME`
+relocates settings and sessions only, as the
+[official CLI reference](https://kiro.dev/docs/reference/cli-commands/)
+documents. Task-root isolation through `KIRO_HOME` therefore does not work on
+2.24.1. The binary lists an undocumented `KIRO_DATA_DIR`; overriding `HOME`
+while pointing that variable at the real sign-in store was not attempted,
+because it would direct the vendor at its credential store through an
+undocumented contract.
+
+### Chosen safety design
+
+Because isolation failed, the provider uses an idle guard. It is fail-closed:
+uncertainty means no read.
+
+| Step | Check                                                                                      | On failure                        |
+| ---- | ------------------------------------------------------------------------------------------ | --------------------------------- |
+| 1    | `QUOTA_AXI_KIRO_NATIVE` is not `0`, `false`, `off`, or `no`                                | `kiro_native_disabled`, no launch |
+| 2    | `QUOTA_AXI_KIRO_ENGINE` (default `v3`) is `v1`, `v2`, or `v3`                              | `kiro_engine_invalid`, no launch  |
+| 3    | `ps` lists no `kiro-cli`, `kiro-cli-chat`, or `Kiro` (IDE) executable for the current user | `kiro_busy_process_active`        |
+| 4    | No `~/.kiro/tasks/*/*.meta.json` task has `executionStatus` `running` or `queued`          | `kiro_busy_task_active`           |
+| 5    | The process list and every metadata file were readable, parseable, and within bounds       | `kiro_busy_unverified`            |
+
+Only when all checks pass does quota-axi spawn the ACP process. The launcher
+uses direct `spawn` with `shell: false`, a detached process group, an empty
+quota-axi-owned working directory, and a quota-axi-owned `KIRO_HOME` under the
+quota-axi cache directory. The private `KIRO_HOME` does not protect tasks; it
+only keeps the read's settings and session files out of `~/.kiro`.
+
+The reader keeps the accepted lifecycle: EOF after a valid response, and fresh
+data only after exit 0 and stream close. It now also terminates on failure:
+after a 15-second timeout, a protocol error, or an oversized response, it ends
+standard input, waits two seconds, sends `SIGTERM` to the process group, and
+sends `SIGKILL` two seconds later if the group is still alive. It retains
+ownership until exit and close are both observed. Stderr is captured up to
+16 KiB only to recognize `error: You are not logged in, please log in with
+kiro-cli login`, which becomes `auth_required` with `kiro_not_logged_in`.
+
+Residual risks:
+
+1. A Kiro task that starts in the roughly one-second window between the
+   preflight and the ACP engine's startup cleanup can lose its `running`
+   status. A Kiro task normally starts inside an already running
+   `kiro-cli-chat` process, which the preflight detects.
+2. A process-group signal after a timeout can interrupt a vendor token
+   rotation in flight. EOF and a two-second grace come first.
+3. Kiro reports the reset as a UTC calendar date, so windows have no
+   `resetsAt`. The shared stale-cache bound therefore never serves an older
+   Kiro snapshot; a skipped read reports `unavailable`.
+
+### Live acceptance with the built CLI, 2026-09-26
+
+The idle preflight passed (no task root, no Kiro process). Running
+`node dist/bin/quota-axi.js --provider kiro --json` with a temporary
+`XDG_CACHE_HOME` exited 0 in about two seconds and reported:
+
+| Field                   | Value                      |
+| ----------------------- | -------------------------- |
+| `plan`                  | `KIRO PRO+`                |
+| Credits used / limit    | 61.22 / 2,000              |
+| `credits.remaining`     | 1,938.78                   |
+| `windows[0].resetText`  | `2026-10-01`               |
+| `percentRemaining`      | 97                         |
+| `pace`                  | `unknown`, `missing_cycle` |
+| `quotaSemantics.status` | `unknown`                  |
+
+The `~/.kiro/tasks` snapshot was identical before and after (absent). The only
+new files under `~/.kiro` were one engine log directory under `~/.kiro/logs`.
+No Kiro process remained afterwards.
+
+## Earlier assessment (2026-09-20, Kiro CLI 2.22.1)
+
+The sections below record the evidence that led to the idle-guard design.
 
 The installed Kiro CLI 2.22.1 has a native, session-free V3 usage route. The
 current 2.22.1 repeat acceptance below records three sequential selected-login
@@ -12,50 +145,8 @@ their streams, and left no observed owned process. The route sends only
 
 A separately approved fixture check then established that the same
 account-only process lifetime removes `running` and `queued` statuses from
-recognized metadata in the shared task root. The supported launcher has no
-established isolated task-home control. This current-version behavior blocks
-safe unattended polling even though quota measurement and normal lifecycle
-now pass.
-
-A parser, executable discovery, provider registration, and presentation slice
-is implemented with mocked transport. The default adapter does not launch
-Kiro or read credentials. No unattended live collector is implemented.
-
-The gate A implementation adds `src/providers/kiro-cli.ts`, a Kiro-specific
-ACP protocol owner. Its launcher, environment and working directory must be
-injected. The default provider has no native binding. Tests supply a mock
-child and fake clock, with synthetic paths and environment only.
-
-The reader sends `initialize` (ID 0), then `_kiro/account/getUsage` (ID 1)
-after a matching protocol-version-1 response. It sends no session or
-credential request. The total wait is 15 seconds and the total stdout limit
-is 1 MiB. Errors publish fixed categories. Stderr is discarded. Failed or
-completed reads retain child ownership until observed exit and stream close.
-After a valid usage response, the reader ends standard input normally and
-publishes fresh data only after exit 0 and stream close. One exception
-releases a confirmed failed spawn after `close`: no PID was assigned, no
-successful spawn or stdout activity was observed, and the child emitted a
-structured error identifying the exact spawn syscall. Generic errors or
-pipe closure alone do not release ownership. Pending reads
-do not launch replacements. The reader never signals the child. Deterministic
-tests establish quota-axi's behavior; the 2.22.1 native runs establish the
-accepted happy-path lifecycle for the installed version.
-
-Provider read-only and profile-only options block the injected reader.
-Auth inspection remains executable discovery only. Remaining native
-acceptance below still blocks default wiring and unattended live-collection
-claims.
-
-```text
-Kiro V3 usage route -> quota-axi provider -> existing JSON / TOON / TUI
- measured and repeatable    native default disabled       mock-tested
-                              task-state blocker
-```
-
-The native transport must gain safe task coexistence before quota-axi can
-collect unattended live Kiro quota. Installed executable presence reports
-unavailable, not usable authentication. This slice does not complete the
-requested live collector.
+recognized metadata in the shared task root. That finding is why the provider
+now refuses to launch while any Kiro task or process is active.
 
 ## Public evidence
 
@@ -482,6 +573,9 @@ native startup test. No KAS server or live account operation was started.
 
 ## Implemented mocked slice
 
+> Historical (2026-09-20). Superseded by [Current result](#current-result):
+> native collection is now wired and enabled behind the idle preflight.
+
 `src/providers/kiro.ts` adds PATH discovery and parsing to the existing provider
 registry. Its default transport remains absent. The parser accepts the native
 ACP result envelope and keeps plan, bonus, and add-on credits separate.
@@ -503,6 +597,9 @@ combined bound, pace forecast, runway, or selection scalar for unresolved
 pool relationships. No manual balance entry or credential reader was added.
 
 ## Historical 2.22.0 acceptance snapshot
+
+> Historical (2026-09-20). Superseded by [Current result](#current-result):
+> native collection is now wired and enabled behind the idle preflight.
 
 The table below records the gate state after the 2.22.0 exit-1 experiment. The
 current 2.22.1 repeat evidence and reader lifecycle section above supersede its
@@ -526,6 +623,9 @@ is unchanged here. Native worker-adapter verification and the separate scout
 are independent.
 
 ## Delivery and installation scope
+
+> Historical (2026-09-20). Superseded by [Current result](#current-result):
+> native collection is now wired and enabled behind the idle preflight.
 
 Draft publication branch: `fm/quota-axi-kiro-draft`, based on `9f63b42`.
 The original `fm/quota-axi-kiro` branch and its research commits remain local.

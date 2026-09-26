@@ -15,7 +15,7 @@ Quota CLI for agents - designed with [AXI](https://axi.md) (Agent eXperience Int
 Agents need quota state before they choose where work can safely run.
 Vendor dashboards are not shaped for shell automation, and local CLIs expose different windows, resets, and auth sources.
 
-quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, Z.AI, Alibaba, OpenCode Go, Antigravity (`agy`), Command Code, MiniMax, MiMo, DeepSeek, OpenRouter, ElevenLabs, Devin, and Muse quota windows in one [AXI](https://axi.md)-shaped call.
+quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, Z.AI, Alibaba, OpenCode Go, Antigravity (`agy`), Command Code, MiniMax, MiMo, DeepSeek, OpenRouter, ElevenLabs, Devin, Muse, and Kiro quota windows in one [AXI](https://axi.md)-shaped call.
 It is data only: it never routes, recommends a provider, model, harness, credential, or route, proxies, intercepts, logs in, imports browser cookies, or mints or rotates a credential. Muse's only quota read also issues an API key server-side, which quota-axi discards unread and rate-bounds ([Muse provider notes](#provider-notes)). When the same stored access token is expired, carries a refresh token, and is definitively rejected, quota-axi may delegate renewal to that vendor's own non-interactive CLI command and re-read the result ([Delegated credential refresh](#delegated-credential-refresh)). Default output has no ordering preference. The opt-in `models --sort runway` surface applies only its documented deterministic comparator to quota evidence, preserves all evidence and explicit ties, and is not a recommendation. It publishes one derived per-scope comparative selection signal, [`selection`](#per-scope-selection-signal), as data computed from figures it already reports; the consumer, not quota-axi, does any routing or ranking with it.
 
 - **Official sources** - quota-axi reads local provider auth sources and calls first-party quota, usage, billing, entitlement, local loopback, or read-only credential-liveness endpoints used by the local agents, with read-only CLI probes where applicable. Vendor-command boundaries and the explicit inference exception are documented under [Safety guarantees](#safety-guarantees).
@@ -843,45 +843,64 @@ The Claude and Codex rows describe default discovery; [`--profile-only`](#profil
 
 ### Provider notes
 
-**Kiro CLI V3 (default launch pending)**
+**Kiro CLI V3**
 
-`--provider kiro` discovers `kiro-cli` on `PATH`. Discovery does not prove
-authentication or collect quota. The default adapter reports
-`kiro_transport_unverified` when the executable exists and
-`kiro_cli_unavailable` when it is absent. Auth inspection reports `skipped`
-or `missing`. quota-axi does not launch Kiro or read Kiro credentials.
-`--no-credential-refresh` reports `kiro_refresh_disabled` when the executable
-exists. Profile-only calls remain unsupported for Kiro.
+`--provider kiro` reads Kiro credits through the Kiro CLI's own Agent Client
+Protocol (ACP) server. quota-axi starts `kiro-cli acp --agent-engine v3
+--auth-method cli` directly (no shell), sends only `initialize` and
+`_kiro/account/getUsage`, and never opens a session or sends a prompt, so the
+read spends no Kiro credits. Kiro resolves its own sign-in; quota-axi never
+reads Kiro credentials.
 
-The internal ACP reader requires an injected process launcher. Mocked tests
-cover its two fixed requests, 15-second wait, 1 MiB response limit, and
-retained child ownership after failures. After a valid usage response, the
-reader ends standard input normally and resolves only after process exit 0 and
-stream close. A nonzero exit or lifecycle timeout is a failed read. The reader
-sends no termination signal and does not destroy a pending child's pipes.
+Starting any Kiro V3 ACP process clears `running` and `queued` statuses in
+every `~/.kiro/tasks/*/*.meta.json` file without checking whether the owning
+Kiro session is alive. `KIRO_HOME` does not move that task root. quota-axi
+therefore runs a fail-closed idle preflight before every launch:
 
-An injected accepted reader can reuse an existing Kiro snapshot as explicitly
-stale after a bounded transport failure, malformed response, or opaque vendor
-failure. It does not infer sign-out from private vendor text. Native default
-wiring remains disabled. A bounded Kiro CLI 2.22.1 fixture check confirmed that
-the supported account-only ACP process lifetime removes `running` and `queued`
-execution statuses from recognized metadata under `~/.kiro/tasks`. A task
-preflight cannot close the race with a task that starts after the check. The
-supported launcher has no established task-home isolation or cross-process
-protection.
+| Preflight finding                                                    | Result                               |
+| -------------------------------------------------------------------- | ------------------------------------ |
+| A `kiro-cli`, `kiro-cli-chat`, or Kiro IDE process of this user runs | Skip with `kiro_busy_process_active` |
+| Task metadata has a `running` or `queued` execution status           | Skip with `kiro_busy_task_active`    |
+| Process list or task metadata cannot be read or parsed               | Skip with `kiro_busy_unverified`     |
+| No Kiro process and no active task                                   | Launch the read                      |
 
-The parser and existing JSON, TOON, cache, and TUI owners have deterministic
-mocked-transport coverage. The parser uses the vendor's native V3 ACP usage
-result. Used credits divided by their allowance give used percent; remaining
-percent follows the same arithmetic as other providers. Plan, bonus, and
-add-on meters stay separate. Unknown relationships have no combined bound,
-runway, or selection signal. Date-only reset text and rounded expiry days do
-not supply reset timestamps or cycle durations.
+A skipped read reports `unavailable` with that reason. Kiro windows carry only
+a reset date, not a timestamp, so the shared stale-cache bound does not serve
+an older Kiro snapshot in their place. A task that
+starts in the few seconds between the preflight and Kiro's own startup is not
+covered.
 
-Default live collection is not implemented. See the
-[transport assessment](docs/kiro-v3-transport-assessment.md) for vendor
-provenance, current lifecycle evidence, and the confirmed task-coexistence
-blocker.
+The read uses an empty working directory and a private `KIRO_HOME` under
+quota-axi's cache directory (`kiro-acp/`), so Kiro's settings and session
+files for the read stay out of `~/.kiro`. Kiro still writes its engine log
+under `~/.kiro/logs`. The exchange is bounded to 15 seconds and 1 MiB of
+output. After a valid response, quota-axi ends standard input and publishes
+the reading only after the process exits 0 and its streams close. On a timeout
+or protocol failure, quota-axi ends standard input, then sends `SIGTERM` and
+finally `SIGKILL` to the ACP process group, two seconds apart, if it is still
+running. Stderr is read only to recognize the sign-in failure and is never
+printed or cached.
+
+| Setting or condition                   | Behavior                                                                     |
+| -------------------------------------- | ---------------------------------------------------------------------------- |
+| `QUOTA_AXI_KIRO_NATIVE=0` (or `false`) | Never launch Kiro; report `kiro_native_disabled`                             |
+| `QUOTA_AXI_KIRO_ENGINE=v3` (default)   | ACP `--agent-engine`; an unknown value fails closed                          |
+| `--no-credential-refresh`              | Skip with `kiro_refresh_disabled`; Kiro may rotate its token during the read |
+| `--profile-only`                       | Unsupported for Kiro                                                         |
+| Kiro signed out                        | `auth_required` with `kiro_not_logged_in`                                    |
+| `kiro-cli` not on `PATH`               | `unavailable` with `kiro_cli_unavailable`                                    |
+
+The plan meter becomes one `credits` window: used credits divided by the
+allowance (for example 2,000 credits per cycle) give used percent, and
+`credits.remaining` carries the absolute remaining credits when the plan meter
+is the only pool. Bonus and add-on pools stay separate windows. Kiro reports
+its reset as a calendar date, which is kept as `resetText` without an invented
+time, so pace, runway, and effective availability stay unknown. Auth
+inspection reports `skipped` with `kiro_auth_vendor_owned`, because quota-axi
+does not open Kiro's sign-in store.
+
+See the [transport assessment](docs/kiro-v3-transport-assessment.md) for
+vendor provenance, lifecycle evidence, and the task-root isolation test.
 
 **Claude**
 
@@ -1109,8 +1128,8 @@ Providers with no established non-interactive rotation command stay read-only on
 - It never prints, logs, or caches credential values.
 - It never mints, rotates, or writes a credential, and never performs a refresh-token exchange. Credential renewal is always delegated to the vendor CLI that owns the store (see [Delegated credential refresh](#delegated-credential-refresh)). Muse is the one provider whose only quota read, the Muse CLI's own startup request, also returns an API key; that read is verified to return the account's standing key rather than mint a fresh one, quota-axi discards the key while parsing, never stores or prints it, and bounds how often it sends the request (see [Muse provider notes](#provider-notes)).
 - It never retains, prints, logs, renders, caches, sends, or exchanges a refresh token's value. The Pi credential brokers read a stored refresh value only to derive a usability boolean - whether it is a usable literal secret rather than absent or an environment, template, or command reference - and discard it immediately; elsewhere only its presence is checked, as evidence that the vendor can still recover.
-- It never launches the Cursor, GitHub (`gh`), Copilot, Pi, Kimi, MiniMax, OpenCode, Command Code, ElevenLabs, Devin, or Muse CLIs. It runs the read-only Alibaba `bl` usage command, the declared read-only Codex app-server probe, Antigravity's noninteractive structured `/quota` read (`agy -p "/quota"`), preferred ahead of its loopback access, and the two declared refresh delegates (`claude doctor`, `grok models`); none starts an agent session or spends the quota being measured. The one explicit exception is `--allow-claude-inference`, whose fixed native Claude request spends inference quota and is documented above.
-- It never signals or kills a delegated refresh. A vendor that outruns quota-axi's wait is left to finish its own token exchange, and quota-axi reports an unconfirmed refresh instead of a credential verdict.
+- It never launches the Cursor, GitHub (`gh`), Copilot, Pi, Kimi, MiniMax, OpenCode, Command Code, ElevenLabs, Devin, or Muse CLIs. It runs the read-only Alibaba `bl` usage command, the declared read-only Codex app-server probe, Antigravity's noninteractive structured `/quota` read (`agy -p "/quota"`), preferred ahead of its loopback access, the Kiro ACP usage read (`kiro-cli acp`, only after an idle preflight; see [Kiro provider notes](#provider-notes)), and the two declared refresh delegates (`claude doctor`, `grok models`); none starts an agent session or spends the quota being measured. The one explicit exception is `--allow-claude-inference`, whose fixed native Claude request spends inference quota and is documented above.
+- It never signals or kills a delegated refresh. A vendor that outruns quota-axi's wait is left to finish its own token exchange, and quota-axi reports an unconfirmed refresh instead of a credential verdict. The Kiro ACP usage read is not a delegated refresh: after a timeout or protocol failure quota-axi ends its input and then terminates that process group.
 - It never routes, ranks a winner, or orders providers preferentially. Derived comparative signals, including `effectiveAvailability[].selection`, are published as data for the consumer to act on.
 
 ### Cache
