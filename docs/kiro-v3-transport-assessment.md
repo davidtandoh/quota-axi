@@ -78,13 +78,13 @@ undocumented contract.
 Because isolation failed, the provider uses an idle guard. It is fail-closed:
 uncertainty means no read.
 
-| Step | Check                                                                                      | On failure                        |
-| ---- | ------------------------------------------------------------------------------------------ | --------------------------------- |
-| 1    | `QUOTA_AXI_KIRO_NATIVE` is not `0`, `false`, `off`, or `no`                                | `kiro_native_disabled`, no launch |
-| 2    | `QUOTA_AXI_KIRO_ENGINE` (default `v3`) is `v1`, `v2`, or `v3`                              | `kiro_engine_invalid`, no launch  |
-| 3    | `ps` lists no `kiro-cli`, `kiro-cli-chat`, or `Kiro` (IDE) executable for the current user | `kiro_busy_process_active`        |
-| 4    | No `~/.kiro/tasks/*/*.meta.json` task has `executionStatus` `running` or `queued`          | `kiro_busy_task_active`           |
-| 5    | The process list and every metadata file were readable, parseable, and within bounds       | `kiro_busy_unverified`            |
+| Step | Check                                                                                                                                         | On failure                        |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| 1    | `QUOTA_AXI_KIRO_NATIVE` is not `0`, `false`, `off`, or `no`                                                                                   | `kiro_native_disabled`, no launch |
+| 2    | `QUOTA_AXI_KIRO_ENGINE` (default `v3`) is `v1`, `v2`, or `v3`                                                                                 | `kiro_engine_invalid`, no launch  |
+| 3    | `ps` lists no `kiro-cli`, `kiro-cli-chat`, or Kiro IDE process for the current user (`kiro` on Linux, any process inside `Kiro.app` on macOS) | `kiro_busy_process_active`        |
+| 4    | No `~/.kiro/tasks/*/*.meta.json` task has `executionStatus` `running` or `queued`                                                             | `kiro_busy_task_active`           |
+| 5    | The process list and every metadata file were readable, parseable, and within bounds                                                          | `kiro_busy_unverified`            |
 
 Only when all checks pass does quota-axi spawn the ACP process. The launcher
 uses direct `spawn` with `shell: false`, a detached process group, an empty
