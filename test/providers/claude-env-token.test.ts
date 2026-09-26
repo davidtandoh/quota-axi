@@ -10,6 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // test here can read a real store or call a real provider.
 const execFileText = vi.fn();
 vi.mock("../../src/lib/process.js", () => ({ execFileText }));
+const fetchClaudeNativeQuota = vi.fn();
+vi.mock("../../src/providers/claude-native-quota.js", () => ({
+  fetchClaudeNativeQuota,
+}));
 
 const ENV_TOKEN = "synthetic-env-token";
 const STORED_TOKEN = "synthetic-stored-token";
@@ -64,12 +68,12 @@ function mockUnreadableStore(): void {
  * source. On darwin this exists alongside the Keychain source (both are
  * checked), giving a second, independent stored candidate.
  */
-function writeOauthFile(accessToken: string): void {
+function writeOauthFile(accessToken: string, expiresAt?: number): void {
   const dir = join(home, ".claude");
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, ".credentials.json"),
-    JSON.stringify({ claudeAiOauth: { accessToken } }),
+    JSON.stringify({ claudeAiOauth: { accessToken, expiresAt } }),
   );
 }
 
@@ -92,6 +96,7 @@ function usageBearers(): string[] {
 beforeEach(() => {
   vi.resetModules();
   execFileText.mockReset();
+  fetchClaudeNativeQuota.mockReset();
   home = mkdtempSync(join(tmpdir(), "quota-axi-claude-env-"));
   vi.stubEnv("HOME", home);
   vi.stubEnv("USERPROFILE", home);
@@ -217,6 +222,193 @@ describe("Claude CLAUDE_CODE_OAUTH_TOKEN credential source", () => {
     expect(report.state.status).not.toBe("fresh");
     expect(report.windows).toEqual([]);
     expect(report.state.error).toContain("403");
+  });
+
+  it("stops at a proven env scope denial without invoking native Claude by default", async () => {
+    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", ENV_TOKEN);
+    mockStore({ accessToken: STORED_TOKEN });
+    fetchMock.mockImplementation(async (_url: string, init: unknown) => {
+      const bearer = (init as { headers: Record<string, string> }).headers
+        .authorization;
+      if (bearer === `Bearer ${ENV_TOKEN}`) {
+        return Response.json(
+          {
+            type: "error",
+            error: {
+              type: "permission_error",
+              message:
+                "OAuth token does not meet scope requirement user:profile",
+            },
+          },
+          { status: 403 },
+        );
+      }
+      return new Response("{}", { status: 401 });
+    });
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+
+    const report = await fetchQuota(options);
+
+    expect(usageBearers()).toEqual([`Bearer ${ENV_TOKEN}`]);
+    expect(fetchClaudeNativeQuota).not.toHaveBeenCalled();
+    expect(report).toMatchObject({
+      source: "unavailable",
+      windows: [],
+      state: {
+        status: "unavailable",
+        authStatus: "usable",
+        error: "claude_env_usage_scope_unavailable",
+      },
+    });
+    expect(report.attempts).toContainEqual({
+      source: "env",
+      status: "failed",
+      error: "claude_env_usage_scope_unavailable",
+      degraded: false,
+    });
+  });
+
+  it("uses the opt-in native source after a proven env scope denial", async () => {
+    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", ENV_TOKEN);
+    mockStore({ accessToken: STORED_TOKEN });
+    fetchMock.mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            type: "permission_error",
+            message: "OAuth token does not meet scope requirement user:profile",
+          },
+        },
+        { status: 403 },
+      ),
+    );
+    fetchClaudeNativeQuota.mockResolvedValue({
+      kind: "success",
+      refreshedAt: "2026-09-19T06:00:00.000Z",
+      windows: [
+        {
+          id: "five_hour",
+          label: "session",
+          kind: "session",
+          percentUsed: 25,
+          percentRemaining: 75,
+          resetsAt: "2026-09-19T07:00:00.000Z",
+          windowSeconds: 18_000,
+        },
+      ],
+    });
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+
+    const report = await fetchQuota({
+      ...options,
+      allowClaudeInference: true,
+    });
+
+    expect(fetchClaudeNativeQuota).toHaveBeenCalledTimes(1);
+    expect(usageBearers()).toEqual([`Bearer ${ENV_TOKEN}`]);
+    expect(report).toMatchObject({
+      source: "cli",
+      windows: [{ id: "five_hour", percentUsed: 25 }],
+      state: {
+        status: "fresh",
+        authStatus: "usable",
+        refreshedAt: "2026-09-19T06:00:00.000Z",
+      },
+    });
+    expect(report.attempts).toContainEqual({
+      source: "claude-native-inference",
+      status: "success",
+    });
+  });
+
+  it("reports an opt-in native rate limit without falling through accounts", async () => {
+    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", ENV_TOKEN);
+    mockStore({ accessToken: STORED_TOKEN });
+    fetchMock.mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            type: "permission_error",
+            message: "OAuth token does not meet scope requirement user:profile",
+          },
+        },
+        { status: 403 },
+      ),
+    );
+    fetchClaudeNativeQuota.mockResolvedValue({
+      kind: "failure",
+      error: "claude_native_rate_limited",
+      status: "rate_limited",
+      retryAfter: "2026-09-19T06:01:00.000Z",
+    });
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+
+    const report = await fetchQuota({
+      ...options,
+      allowClaudeInference: true,
+    });
+
+    expect(usageBearers()).toEqual([`Bearer ${ENV_TOKEN}`]);
+    expect(report).toMatchObject({
+      source: "unavailable",
+      windows: [],
+      state: {
+        status: "rate_limited",
+        authStatus: "usable",
+        error: "claude_native_rate_limited",
+        retryAfter: "2026-09-19T06:01:00.000Z",
+      },
+    });
+  });
+
+  it("keeps the windows a native 429 carried without masking the rate limit", async () => {
+    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", ENV_TOKEN);
+    mockStore({ accessToken: STORED_TOKEN });
+    fetchMock.mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            type: "permission_error",
+            message: "OAuth token does not meet scope requirement user:profile",
+          },
+        },
+        { status: 403 },
+      ),
+    );
+    const exhausted = {
+      id: "five_hour",
+      label: "session",
+      kind: "session" as const,
+      percentUsed: 100,
+      percentRemaining: 0,
+      resetsAt: "2026-09-19T07:00:00.000Z",
+      windowSeconds: 18_000,
+    };
+    fetchClaudeNativeQuota.mockResolvedValue({
+      kind: "failure",
+      error: "claude_native_rate_limited",
+      status: "rate_limited",
+      retryAfter: "2026-09-19T06:01:00.000Z",
+      windows: [exhausted],
+    });
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+
+    const report = await fetchQuota({
+      ...options,
+      allowClaudeInference: true,
+    });
+
+    expect(report).toMatchObject({
+      source: "cli",
+      windows: [exhausted],
+      state: {
+        status: "rate_limited",
+        stale: false,
+        authStatus: "usable",
+        error: "claude_native_rate_limited",
+        retryAfter: "2026-09-19T06:01:00.000Z",
+      },
+    });
   });
 
   it("stops on a definitive 401 without trying a healthy stored credential", async () => {
@@ -365,6 +557,93 @@ describe("Claude CLAUDE_CODE_OAUTH_TOKEN credential source", () => {
     expect(readCachedProvider("claude")).toBeDefined();
   });
 
+  it("keeps an earlier definitive rejection ahead of a confirmed stored expiry", async () => {
+    // Keychain is tried before the oauth-file sidecar on darwin, and the
+    // environment token before both.
+    writeOauthFile(OAUTH_FILE_TOKEN, Date.now() - 60_000);
+    mockStore({ accessToken: STORED_TOKEN });
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const { writeCachedProviders, readCachedProvider } =
+      await import("../../src/cache.js");
+    const fresh = await fetchQuota(options);
+    expect(fresh.state.status).toBe("fresh");
+    writeCachedProviders([fresh]);
+    expect(readCachedProvider("claude")).toBeDefined();
+
+    // The env token fails transiently, the Keychain sibling is definitively
+    // rejected, and the stored-expired sidecar that runs last is confirmed
+    // expired against /profile. The earlier resolved 401 remains authoritative.
+    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", ENV_TOKEN);
+    fetchMock.mockImplementation(async (url: string, init: unknown) => {
+      const bearer = (init as { headers: Record<string, string> }).headers
+        .authorization;
+      if (bearer === `Bearer ${ENV_TOKEN}`)
+        return new Response("{}", { status: 500 });
+      if (bearer === `Bearer ${STORED_TOKEN}`)
+        return new Response("{}", { status: 401 });
+      return String(url).includes("/oauth/profile")
+        ? new Response("{}", { status: 401 })
+        : new Response("{}", {
+            status: 429,
+            headers: { "retry-after": "60" },
+          });
+    });
+    const report = await fetchQuota(options);
+
+    expect(report.state.status).toBe("auth_required");
+    expect(readCachedProvider("claude")).toBeUndefined();
+  });
+
+  it("still offers the Keychain remedy when only the identity probe answered", async () => {
+    // The Keychain holds the credential but its value read is gated, the env
+    // token is rejected non-definitively, and the stored-expired sidecar is
+    // merely rate limited. Nothing read a credential, so the one actionable
+    // remedy is the Keychain grant - the identity probe answering live must
+    // not read as a source that produced a reading.
+    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", ENV_TOKEN);
+    writeOauthFile(OAUTH_FILE_TOKEN, Date.now() - 60_000);
+    mockStore({ accessToken: STORED_TOKEN });
+    fetchMock.mockImplementation(async (url: string, init: unknown) => {
+      const bearer = (init as { headers: Record<string, string> }).headers
+        .authorization;
+      if (bearer === `Bearer ${ENV_TOKEN}`)
+        return new Response("{}", { status: 403 });
+      return String(url).includes("/oauth/profile")
+        ? Response.json({ account: { uuid: "account-uuid-fixture" } })
+        : new Response("{}", {
+            status: 429,
+            headers: { "retry-after": "60" },
+          });
+    });
+
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const { annotateQuotaAdvice, KEYCHAIN_ACCESS_REASON } =
+      await import("../../src/advice.js");
+    const report = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
+    const annotated = annotateQuotaAdvice({
+      generatedAt: "2026-09-18T00:00:00.000Z",
+      providers: [report],
+    });
+
+    expect(report.attempts).toContainEqual({
+      source: "keychain",
+      status: "skipped",
+      error: "keychain_prompt_required",
+      credentialPresent: true,
+    });
+    expect(report.attempts).toContainEqual({
+      source: "oauth-profile",
+      status: "success",
+    });
+    expect(annotated.providers[0]?.state.reason).toBe(KEYCHAIN_ACCESS_REASON);
+    expect(annotated.help?.join("\n") ?? "").toContain(
+      "--allow-keychain-prompt",
+    );
+  });
+
   it("trims surrounding whitespace on the environment token before sending it", async () => {
     vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", `  ${ENV_TOKEN}\n`);
     mockStore();
@@ -407,15 +686,35 @@ describe("Claude CLAUDE_CODE_OAUTH_TOKEN credential source", () => {
     expect(readFileSync(cacheFilePath(), "utf8")).not.toContain(ENV_TOKEN);
   });
 
-  it("still withholds a sign-out verdict when the Keychain itself is unreadable", async () => {
-    // Preserved behavior: a source quota-axi could not open may hold the live
-    // session, so a rejection elsewhere is reported without asserting sign-out.
-    vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", ENV_TOKEN);
+  it.each([true, false])(
+    "keeps an env 401 authoritative with Keychain prompt permission %s",
+    async (allowKeychainPrompt) => {
+      vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", ENV_TOKEN);
+      if (allowKeychainPrompt) mockUnreadableStore();
+      else mockStore({ accessToken: STORED_TOKEN });
+      respondWith({}, 401);
+      const { fetchQuota } = await import("../../src/providers/claude.js");
+      const { annotateQuotaAdvice } = await import("../../src/advice.js");
+      const report = await fetchQuota({ ...options, allowKeychainPrompt });
+      const annotated = annotateQuotaAdvice({
+        generatedAt: new Date().toISOString(),
+        providers: [report],
+      });
+
+      expect(report.state.status).toBe("auth_required");
+      expect(report.state.error).toBe("Claude sign-in required");
+      expect(annotated.providers[0]?.state.reason).toBeUndefined();
+      expect(annotated.providers[0]?.state.remedyCommand).toBeUndefined();
+      expect(usageBearers()).toEqual([`Bearer ${ENV_TOKEN}`]);
+    },
+  );
+
+  it("withholds a stored-session sign-out when Keychain is unreadable", async () => {
+    writeOauthFile(STORED_TOKEN);
     mockUnreadableStore();
     respondWith({}, 401);
     const { fetchQuota } = await import("../../src/providers/claude.js");
     const report = await fetchQuota(options);
-
     expect(report.state.status).not.toBe("auth_required");
   });
 

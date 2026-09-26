@@ -12,12 +12,33 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   deleteCachedProvider,
   readCachedClaudeProvider,
+  readCachedCommandCodeProvider,
+  readCachedCodexProvider,
   readCachedKimiProvider,
+  readCachedDevinProvider,
+  readCachedMiniMaxProvider,
   readCachedProvider,
+  retireCodexAccount,
   writeCachedProviders,
+  stampCodexStoredAccountId,
 } from "../src/cache.js";
+import { annotateQuotaAdvice } from "../src/advice.js";
 import { cacheFilePath, claudeCredentialContextId } from "../src/lib/fs.js";
+import {
+  clearCommandCodeReadingContextId,
+  commandCodeCacheContextId,
+  publishCommandCodeReadingContextId,
+} from "../src/providers/commandcode-cache-context.js";
+import { staleFromCache } from "../src/providers/common.js";
+import { withQuotaSemantics } from "../src/interpretation.js";
 import { createKimiCodeCliCredentialSource } from "../src/providers/kimi-code-cli-credential.js";
+import { createKimiAdapter } from "../src/providers/kimi.js";
+import {
+  clearDevinReadingContextId,
+  devinCacheContextId,
+  publishDevinReadingContextId,
+} from "../src/providers/devin-cache-context.js";
+import { publishMiniMaxReadingContextId } from "../src/providers/minimax-cache-context.js";
 import type { ProviderId, ProviderQuota } from "../src/types.js";
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
@@ -35,9 +56,93 @@ afterEach(() => {
   else process.env.KIMI_CODE_HOME = originalKimiCodeHome;
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
+  clearCommandCodeReadingContextId();
+  clearDevinReadingContextId();
 });
 
 describe("quota cache", () => {
+  it("serves Codex stale quota only for a matching stored account", () => {
+    useTempCache();
+    const snapshot = quota("codex", 42);
+    stampCodexStoredAccountId(snapshot, "acct-signed-in");
+    writeCachedProviders([snapshot]);
+
+    expect(readCachedCodexProvider(undefined, [])).toBeUndefined();
+    expect(readCachedCodexProvider(undefined, ["acct-other"])).toBeUndefined();
+    expect(
+      readCachedCodexProvider(undefined, ["acct-signed-in"]),
+    ).toMatchObject({
+      windows: [{ percentUsed: 42 }],
+    });
+  });
+
+  it("continues from a mismatched Codex home snapshot to a matching keyless snapshot", () => {
+    useTempCache();
+    const foreignHome = quota("codex", 10);
+    foreignHome.accountKey = "codex-home";
+    stampCodexStoredAccountId(foreignHome, "acct-foreign");
+    const signedIn = quota("codex", 80);
+    stampCodexStoredAccountId(signedIn, "acct-signed-in");
+    writeCachedProviders([foreignHome, signedIn]);
+
+    expect(
+      readCachedCodexProvider("codex-home", ["acct-signed-in"]),
+    ).toMatchObject({ windows: [{ percentUsed: 80 }] });
+  });
+
+  it("retires only Codex snapshots stamped for rejected accounts", () => {
+    useTempCache();
+    const defaultA = quota("codex", 10);
+    const keyedA = quota("codex", 20);
+    keyedA.accountKey = "openai-codex";
+    const keyedB = quota("codex", 30);
+    keyedB.accountKey = "openai-codex-work";
+    const unstamped = quota("codex", 40);
+    unstamped.accountKey = "openai-codex-unstamped";
+    stampCodexStoredAccountId(defaultA, "acct-a");
+    stampCodexStoredAccountId(keyedA, "acct-a");
+    stampCodexStoredAccountId(keyedB, "acct-b");
+    writeCachedProviders([defaultA, keyedA, keyedB, unstamped]);
+
+    retireCodexAccount(["acct-a"]);
+
+    expect(readCachedProvider("codex")).toBeUndefined();
+    expect(readCachedProvider("codex", "openai-codex")).toBeUndefined();
+    expect(readCachedProvider("codex", "openai-codex-work")).toMatchObject({
+      windows: [{ percentUsed: 30 }],
+    });
+    expect(readCachedProvider("codex", "openai-codex-unstamped")).toMatchObject(
+      { windows: [{ percentUsed: 40 }] },
+    );
+  });
+
+  it("withholds legacy Codex snapshots without account context", () => {
+    useTempCache();
+    writeCachedProviders([quota("codex", 42)]);
+
+    expect(
+      readCachedCodexProvider(undefined, ["acct-signed-in"]),
+    ).toBeUndefined();
+  });
+
+  it.each([true, false])(
+    "leaves persistent snapshots untouched by native Claude reads with windows %s",
+    (hasWindows) => {
+      useTempCache();
+      writeCachedProviders([quota("claude", 20), quota("copilot", 30)]);
+      const before = readFileSync(cacheFilePath(), "utf8");
+      const native = quota("claude", 80);
+      native.source = "cli";
+      native.state.sourcesTried = ["env", "claude-native-inference"];
+      if (!hasWindows) native.windows = [];
+      writeCachedProviders([native]);
+      expect(readFileSync(cacheFilePath(), "utf8")).toBe(before);
+      writeCachedProviders([native, quota("copilot", 40)]);
+      expect(readCachedProvider("claude")?.windows[0]?.percentUsed).toBe(20);
+      expect(readCachedProvider("copilot")?.windows[0]?.percentUsed).toBe(40);
+    },
+  );
+
   it("preserves Kiro snapshots on unavailable evidence and clears only explicit fresh empty usage", () => {
     useTempCache();
     const kiro = quota("kiro", 25);
@@ -146,6 +251,68 @@ describe("quota cache", () => {
     });
   });
 
+  it("isolates Codex Pi sibling snapshots by account key", () => {
+    useTempCache();
+    const personal = quota("codex", 20);
+    personal.accountKey = "openai-codex";
+    personal.source = "pi:openai-codex";
+    personal.state.sourcesTried = ["pi:openai-codex"];
+    const work = quota("codex", 80);
+    work.accountKey = "openai-codex-work";
+    work.source = "pi:openai-codex-work";
+    work.state.sourcesTried = ["pi:openai-codex-work"];
+
+    writeCachedProviders([personal, work]);
+
+    expect(readCachedProvider("codex")).toBeUndefined();
+    expect(readCachedProvider("codex", "openai-codex")).toMatchObject({
+      accountKey: "openai-codex",
+      source: "pi:openai-codex",
+      windows: [{ percentUsed: 20 }],
+    });
+    expect(readCachedProvider("codex", "openai-codex-work")).toMatchObject({
+      accountKey: "openai-codex-work",
+      source: "pi:openai-codex-work",
+      windows: [{ percentUsed: 80 }],
+    });
+    const payload = JSON.parse(readFileSync(cacheFilePath(), "utf8")) as {
+      schemaVersion: number;
+    };
+    expect(payload.schemaVersion).toBe(3);
+  });
+
+  it("keeps an expanded report's filler key out of a later unexpanded report", () => {
+    useTempCache();
+    const work = quota("codex", 20);
+    work.accountKey = "openai-codex-work";
+    const expanded = annotateQuotaAdvice({
+      generatedAt: "2026-07-06T18:10:00Z",
+      providers: [work, quota("copilot", 40)],
+    });
+    expect(expanded.schemaVersion).toBe(6);
+    expect(expanded.providers[1]?.accountKey).toBe("default");
+
+    writeCachedProviders(expanded.providers);
+    const cached = readCachedProvider("copilot");
+    expect(cached).toMatchObject({ windows: [{ percentUsed: 40 }] });
+    expect(cached?.accountKey).toBeUndefined();
+
+    const later = annotateQuotaAdvice({
+      generatedAt: "2026-07-06T19:10:00Z",
+      providers: [
+        staleFromCache(
+          cached!,
+          "fetch failed",
+          ["api"],
+          [],
+          Date.parse("2026-07-06T19:10:00Z"),
+        )!,
+      ],
+    });
+    expect(later.schemaVersion).toBe(5);
+    expect(later.providers[0]?.accountKey).toBeUndefined();
+  });
+
   it("retains exact known and unfamiliar Codex cache identities", () => {
     useTempCache();
     const codex = quota("codex", 20);
@@ -225,6 +392,18 @@ describe("quota cache", () => {
     });
   });
 
+  it("never writes a Copilot native snapshot over a servable legacy one", () => {
+    useTempCache();
+    writeCachedProviders([quota("copilot", 18)]);
+
+    writeCachedProviders([{ ...quota("copilot", 55), source: "cli" as const }]);
+
+    expect(readCachedProvider("copilot")).toMatchObject({
+      source: "oauth",
+      windows: [{ percentUsed: 18 }],
+    });
+  });
+
   it("stores Claude cache provenance as an opaque context identifier", () => {
     useTempCache();
     const contextDir = join(tempDir!, "synthetic-claude-context");
@@ -237,10 +416,26 @@ describe("quota cache", () => {
       providers: Array<{ credentialContext?: string }>;
     };
     const contextId = payload.providers[0]?.credentialContext;
-    expect(payload.schemaVersion).toBe(2);
+    expect(payload.schemaVersion).toBe(3);
     expect(contextId).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(payload)).not.toContain(contextDir);
     expect(readCachedClaudeProvider(claudeCredentialContextId())).toBeDefined();
+  });
+
+  it("keeps one Claude snapshot when the credential context changes", () => {
+    useTempCache();
+    process.env.CLAUDE_CONFIG_DIR = join(tempDir!, "claude-context-a");
+    writeCachedProviders([quota("claude", 10)]);
+    process.env.CLAUDE_CONFIG_DIR = join(tempDir!, "claude-context-b");
+    writeCachedProviders([quota("claude", 20)]);
+
+    const payload = JSON.parse(readFileSync(cacheFilePath(), "utf8")) as {
+      providers: Array<{ snapshot: ProviderQuota }>;
+    };
+    expect(payload.providers).toHaveLength(1);
+
+    writeCachedProviders([quotaWithoutWindows("claude")]);
+    expect(readCachedProvider("claude")).toBeUndefined();
   });
 
   it("refuses Kimi cache captured under another Kimi Code environment", async () => {
@@ -329,6 +524,119 @@ oauth_host = "https://auth.kimi.ai"
     ).toBeUndefined();
   });
 
+  /**
+   * An authenticated `/usages` body with no quota field (a Free-tier account)
+   * is a fresh reading with no windows, per README Cache "fresh with no
+   * windows clears this context's slot" - not a stale-eligible failure that
+   * would preserve a pre-existing snapshot.
+   */
+  it("clears an existing Kimi snapshot on a fresh no-quota reading, and a later transient failure does not resurrect it", async () => {
+    useTempCache();
+    const codeHome = join(tempDir!, "no-quota-kimi-code-home");
+    mkdirSync(codeHome, { recursive: true });
+    process.env.KIMI_CODE_HOME = codeHome;
+
+    const piBroker = {
+      resolve: async () =>
+        ({
+          status: "available",
+          kind: "api_key",
+          credential: "synthetic-pi-key",
+        }) as const,
+      inspect: async () => "available" as const,
+    };
+    const cliSource = createKimiCodeCliCredentialSource();
+    const readKimi = (respond: () => Response, at: string) =>
+      createKimiAdapter({
+        broker: piBroker,
+        cliCredentialSource: cliSource,
+        fetch: (async () => respond()) as unknown as typeof fetch,
+        readCachedProvider: readCachedKimiProvider,
+        deleteCachedProvider,
+        now: () => Date.parse(at),
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+    /**
+     * The snapshot the no-quota reading has to clear belongs to the identity
+     * that reading publishes, so it comes from a real successful read rather
+     * than from a context another test happened to leave behind.
+     */
+    const withWindows = await readKimi(
+      () =>
+        new Response(
+          JSON.stringify({
+            usages: {
+              limit_5h: {
+                used_ratio: 0.42,
+                reset_time: "2026-09-22T04:00:00Z",
+              },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      "2026-09-21T23:55:00Z",
+    );
+    expect(withWindows.state.status).toBe("fresh");
+    expect(withWindows.windows.length).toBeGreaterThan(0);
+    writeCachedProviders([withWindows]);
+    expect(readCachedProvider("kimi")).toBeDefined();
+
+    const noQuotaReport = await readKimi(
+      () =>
+        new Response("{}", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      "2026-09-22T00:00:00Z",
+    );
+
+    expect(noQuotaReport.state).toMatchObject({
+      status: "fresh",
+      stale: false,
+      authStatus: "usable",
+    });
+    expect(noQuotaReport.windows).toEqual([]);
+
+    writeCachedProviders([noQuotaReport]);
+    expect(readCachedProvider("kimi")).toBeUndefined();
+
+    const failed = await readKimi(() => {
+      throw new Error("network down");
+    }, "2026-09-22T00:05:00Z");
+
+    expect(failed.state.stale).toBe(false);
+    expect(failed.windows).toEqual([]);
+    expect(readCachedProvider("kimi")).toBeUndefined();
+  });
+
+  it("scopes MiniMax cache reuse to the reading's source and deployment", () => {
+    useTempCache();
+    const globalContext = "a".repeat(64);
+    const otherContext = "b".repeat(64);
+    publishMiniMaxReadingContextId(globalContext);
+
+    writeCachedProviders([quota("minimax", 42)]);
+
+    const payload = JSON.parse(readFileSync(cacheFilePath(), "utf8")) as {
+      providers: Array<{ credentialContext?: string }>;
+    };
+    expect(payload.providers[0]?.credentialContext).toBe(globalContext);
+    expect(readCachedMiniMaxProvider(globalContext)).toBeDefined();
+    expect(readCachedMiniMaxProvider(otherContext)).toBeUndefined();
+
+    // A legacy record without a context is withheld, not deleted.
+    writeFileSync(
+      cacheFilePath(),
+      JSON.stringify({
+        generatedAt: "x",
+        schemaVersion: 2,
+        providers: [quota("minimax", 11)],
+      }),
+    );
+    expect(readCachedMiniMaxProvider(globalContext)).toBeUndefined();
+    expect(readCachedProvider("minimax")?.windows[0].percentUsed).toBe(11);
+  });
+
   it("writes normalized cache data with mode 0600 and no attempts or sentinel secret", () => {
     useTempCache();
     const sentinel = "CACHE-SENTINEL-KIMI-612704";
@@ -390,6 +698,91 @@ oauth_host = "https://auth.kimi.ai"
     expect(cachedWindow?.pace).toBeUndefined();
   });
 
+  it("retains a used-share parent marker without inventing remaining", () => {
+    useTempCache();
+    const provider = quota("copilot", 40);
+    provider.windows.push({
+      id: "month_code",
+      label: "code month",
+      kind: "monthly",
+      percentUsed: 25,
+      shareOf: "month_total",
+    });
+
+    writeCachedProviders([provider]);
+
+    const cached = readCachedProvider("copilot")?.windows[1];
+    expect(cached).toMatchObject({
+      id: "month_code",
+      percentUsed: 25,
+      shareOf: "month_total",
+    });
+    expect(cached?.percentRemaining).toBeUndefined();
+  });
+
+  it("presents a 0.1.47 Kimi month_code snapshot as a share of month_total", () => {
+    useTempCache();
+    const file = cacheFilePath();
+    const contextId = "b".repeat(64);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        generatedAt: "2026-07-06T18:10:00Z",
+        schemaVersion: 3,
+        providers: [
+          {
+            provider: "kimi",
+            credentialContext: contextId,
+            label: "Kimi",
+            source: "api",
+            windows: [
+              {
+                id: "month_total",
+                label: "month",
+                kind: "monthly",
+                percentUsed: 40,
+                percentRemaining: 60,
+              },
+              {
+                id: "month_code",
+                label: "code month",
+                kind: "monthly",
+                percentUsed: 25,
+              },
+            ],
+            state: {
+              status: "fresh",
+              stale: false,
+              refreshedAt: "2026-07-06T18:10:00Z",
+              sourcesTried: ["kimi-code"],
+            },
+          },
+        ],
+      }),
+    );
+
+    const stale = staleFromCache(
+      readCachedKimiProvider(contextId)!,
+      "fetch failed: synthetic outage",
+      ["kimi-code"],
+      [],
+      Date.parse("2026-07-06T18:20:00Z"),
+    )!;
+    const monthCode = stale.windows.find(
+      (window) => window.id === "month_code",
+    );
+    expect(monthCode).toMatchObject({
+      percentUsed: 25,
+      shareOf: "month_total",
+    });
+    expect(monthCode?.percentRemaining).toBeUndefined();
+    expect(
+      withQuotaSemantics(stale, "2026-07-06T18:20:00Z").quotaSemantics
+        ?.unresolvedWindowIds,
+    ).toBeUndefined();
+  });
+
   it("deletes a definitive-auth provider while retaining other snapshots", () => {
     useTempCache();
     writeCachedProviders([quota("claude", 10), quota("kimi", 20)]);
@@ -432,6 +825,104 @@ oauth_host = "https://auth.kimi.ai"
     ]);
 
     expect(readCachedProvider("alibaba")).toBeUndefined();
+  });
+
+  it("does not replace a context-scoped snapshot when the current reading has no identity", () => {
+    useTempCache();
+    const contextId = commandCodeCacheContextId(
+      "pi:commandcode",
+      "org:fixture",
+    );
+    publishCommandCodeReadingContextId(contextId);
+    writeCachedProviders([quota("commandcode", 40)]);
+
+    clearCommandCodeReadingContextId();
+    writeCachedProviders([quota("commandcode", 5)]);
+
+    const payload = JSON.parse(readFileSync(cacheFilePath(), "utf8")) as {
+      providers: Array<{
+        provider?: string;
+        credentialContext?: string;
+        windows: Array<{ percentUsed?: number }>;
+      }>;
+    };
+    const record = payload.providers.find(
+      (provider) => provider.provider === "commandcode",
+    );
+    expect(record?.credentialContext).toBe(contextId);
+    expect(record?.windows[0]?.percentUsed).toBe(40);
+    expect(
+      readCachedCommandCodeProvider(contextId)?.windows[0].percentUsed,
+    ).toBe(40);
+  });
+
+  it("does not clear a context-scoped snapshot when a no-window reading has no identity", () => {
+    useTempCache();
+    const contextId = commandCodeCacheContextId(
+      "pi:commandcode",
+      "org:fixture",
+    );
+    publishCommandCodeReadingContextId(contextId);
+    writeCachedProviders([quota("commandcode", 40)]);
+
+    clearCommandCodeReadingContextId();
+    writeCachedProviders([quotaWithoutWindows("commandcode")]);
+
+    expect(
+      readCachedCommandCodeProvider(contextId)?.windows[0].percentUsed,
+    ).toBe(40);
+  });
+
+  it("clears a context-scoped snapshot after an identified no-window report", () => {
+    useTempCache();
+    const contextId = commandCodeCacheContextId(
+      "pi:commandcode",
+      "org:fixture",
+    );
+    publishCommandCodeReadingContextId(contextId);
+    writeCachedProviders([quota("commandcode", 40)]);
+    writeCachedProviders([quotaWithoutWindows("commandcode")]);
+
+    expect(readCachedCommandCodeProvider(contextId)).toBeUndefined();
+    expect(readCachedProvider("commandcode")).toBeUndefined();
+  });
+
+  it("reuses a Devin snapshot only for the source, host, and key that wrote it", () => {
+    useTempCache();
+    const contextId = devinCacheContextId(
+      "env:WINDSURF_API_KEY",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    const otherId = devinCacheContextId(
+      "file:credentials.toml",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    publishDevinReadingContextId(contextId);
+    writeCachedProviders([quota("devin", 40)]);
+
+    clearDevinReadingContextId();
+    writeCachedProviders([quota("devin", 5)]);
+
+    expect(readCachedDevinProvider(contextId)?.windows[0].percentUsed).toBe(40);
+    expect(readCachedDevinProvider(otherId)).toBeUndefined();
+    expect(readCachedProvider("devin")?.windows[0].percentUsed).toBe(40);
+  });
+
+  it("clears a Devin snapshot after an identified no-window report", () => {
+    useTempCache();
+    const contextId = devinCacheContextId(
+      "env:WINDSURF_API_KEY",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    publishDevinReadingContextId(contextId);
+    writeCachedProviders([quota("devin", 40)]);
+    writeCachedProviders([quotaWithoutWindows("devin")]);
+
+    expect(readCachedDevinProvider(contextId)).toBeUndefined();
+    expect(readCachedProvider("devin")).toBeUndefined();
   });
 });
 
@@ -488,5 +979,9 @@ function providerLabel(provider: ProviderId): string {
   if (provider === "grok") return "Grok";
   if (provider === "zai") return "Z.AI";
   if (provider === "agy") return "Antigravity";
+  if (provider === "commandcode") return "Command Code";
+  if (provider === "opencode-go") return "OpenCode Go";
+  if (provider === "minimax") return "MiniMax";
+  if (provider === "devin") return "Devin";
   return "Kimi";
 }

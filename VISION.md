@@ -22,7 +22,7 @@ The default report stays in declaration order and carries no preference, so no c
 ## Least action on someone else's credentials
 
 quota-axi acts on credentials other tools own, and it takes the least action that yields a true reading.
-It never logs in, never creates an identity, and never runs anything that spends the quota being measured.
+It never logs in or creates an identity. Default quota reads spend no inference; the narrowly scoped opt-in exception is defined in [README Provider notes](README.md#provider-notes).
 It never drives a browser or imports browser state or cookies, because a surface built for a human page is flaky and yields numbers it cannot verify.
 Running a vendor's own non-interactive command is allowed when that is what stands between quota-axi and an accurate report, and only under the limits below.
 Renewing a short-lived credential is such a case, and it is always the vendor's own CLI that renews it: quota-axi runs the smallest non-interactive command that already owns rotation, then re-reads the store that CLI just rewrote.
@@ -37,6 +37,9 @@ A credential the user supplies explicitly is as legitimate a source as one disco
 
 Every number reported is a number a provider reported or a figure derived from evidence quota-axi can trust.
 It never invents a window duration, a reset deadline, a relationship between windows, or a percentage.
+Across every provider and every window, `percentUsed` is how much of that window has been consumed and `percentRemaining` is what is left; adapters convert vendor fields into that direction rather than mirroring whatever polarity the wire happens to use.
+That data direction never changes; a person who reads gauges the other way may flip what the `--tui` report draws to consumption with one user-level preference, and that preference reaches only the human display, never the model, the cache, or the TOON and JSON an agent reads, because an agent has no preference to honor.
+The meaning of a vendor field is verified against a real observed reading or the vendor's own client or schema, never inferred from a UI screenshot.
 A conservative rule such as taking the lowest window as the effective bound applies only where that relationship is established as a fact about that provider, never as a default where relationships are unknown.
 Uncertainty gets louder as it propagates: an unmeasurable scope publishes no row, `spendPriority` renders the literal `unknown` rather than `0`, and an unknown pace marker is omitted rather than drawn.
 A number that has stopped being true is never served, even when labelled with its age and provenance, because it misleads the agent acting on it, and a failed read is reported as a failed read.
@@ -73,4 +76,4 @@ Adapter behavior is clean-room from a vendor's own observable behavior, and thir
 The repo holds itself to the standard it asks of contributors, with no exemption for the contributions it most wants: every human pull request goes through the no-mistakes pipeline, generated files are regenerated rather than hand-edited, and tests exercise the published interface rather than the source text.
 
 A change aligns when it makes a real quota fact readable that was previously unreadable or wrong, keeps every existing path working, and leaves the decision with the caller.
-A change should be resisted when it publishes a number no provider supports, holds a boundary at the cost of a false report, spends the quota it is measuring, mints or rotates a credential quota-axi does not own, or grows the surface into a product this is not.
+A change should be resisted when it publishes a number no provider supports, holds a boundary at the cost of a false report, spends the quota it is measuring without the documented explicit opt-in, mints or rotates a credential quota-axi does not own, or grows the surface into a product this is not.

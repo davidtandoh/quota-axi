@@ -52,6 +52,8 @@ function cachedQuota(): ProviderQuota {
         kind: "credits",
         percentUsed: 25,
         percentRemaining: 75,
+        // A dated window: resetless credit windows have no stale age bound.
+        resetsAt: "2026-10-01T00:00:00.000Z",
         resetText: "2026-10-01",
       },
     ],
@@ -290,6 +292,7 @@ describe("Kiro provider acceptance boundary", () => {
         findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
         readUsage: vi.fn().mockResolvedValue(raw),
         readCachedProvider: vi.fn().mockReturnValue(cached),
+        now: () => Date.parse(generatedAt) + 60_000,
       });
 
       const quota = await adapter.fetchQuota(options);
@@ -325,6 +328,7 @@ describe("Kiro provider acceptance boundary", () => {
         .fn()
         .mockRejectedValue(new KiroCliError("kiro_usage_timed_out")),
       readCachedProvider: vi.fn().mockReturnValue(cached),
+      now: () => Date.parse(generatedAt) + 60_000,
     });
 
     expect(await adapter.fetchQuota(options)).toMatchObject({

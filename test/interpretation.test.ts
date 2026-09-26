@@ -86,6 +86,7 @@ describe("quota semantics", () => {
       ["agy", [window("gemini_weekly", "weekly", 98)]],
       ["cursor", [window("included_usage", "monthly", 72)]],
       ["copilot", [window("premium_interactions", "monthly", 81)]],
+      ["commandcode", [window("five_hour", "session", 55)]],
     ];
 
     for (const [providerId, windows] of cases) {
@@ -327,6 +328,19 @@ describe("quota semantics", () => {
       ["model:qwen:latest", 11],
       ["model:qwen:reasoning", 22],
     ]);
+  });
+
+  it("reports OpenCode Go with no windows as unknown, not partial with all caps unresolved", () => {
+    const result = withQuotaSemantics(
+      provider("opencode-go", []),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics).toMatchObject({
+      status: "unknown",
+      effectiveAvailability: [],
+      unresolvedWindowIds: [],
+    });
   });
 
   it("treats OpenCode Go rolling, weekly, and monthly windows as stacked plan caps", () => {
@@ -684,6 +698,75 @@ describe("quota semantics", () => {
     ]);
   });
 
+  it("bounds Kimi by its account windows and never by the monthly code share", () => {
+    const monthCode: QuotaWindow = {
+      id: "month_code",
+      label: "code month",
+      kind: "monthly",
+      percentUsed: 25,
+      shareOf: "month_total",
+    };
+    const result = withQuotaSemantics(
+      provider("kimi", [
+        window("five_hour", "session", 50),
+        window("month_total", "monthly", 60),
+        monthCode,
+      ]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics?.status).toBe("known");
+    expect(result.quotaSemantics?.unresolvedWindowIds).toBeUndefined();
+    expect(result.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "all_models",
+        status: "known",
+        effectivePercentRemaining: 50,
+        boundedBy: ["five_hour", "month_total"],
+        limitingWindowIds: ["five_hour"],
+      }),
+    ]);
+  });
+
+  it("recognizes any Kimi window marked as a used-share without bounding by it", () => {
+    const result = withQuotaSemantics(
+      provider("kimi", [
+        window("weekly", "weekly", 59),
+        {
+          id: "future_share",
+          label: "future share",
+          kind: "monthly",
+          percentUsed: 10,
+          shareOf: "weekly",
+        },
+      ]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics?.status).toBe("known");
+    expect(result.quotaSemantics?.unresolvedWindowIds).toBeUndefined();
+    expect(result.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "all_models",
+        boundedBy: ["weekly"],
+        effectivePercentRemaining: 59,
+      }),
+    ]);
+  });
+
+  it("treats a Kimi month_code window without a share marker as unresolved", () => {
+    const result = withQuotaSemantics(
+      provider("kimi", [
+        window("weekly", "weekly", 59),
+        window("month_code", "monthly", 75),
+      ]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics?.status).toBe("partial");
+    expect(result.quotaSemantics?.unresolvedWindowIds).toEqual(["month_code"]);
+  });
+
   it("keeps valid Kimi bounds while marking unparsed limits partial", () => {
     const kimi = provider("kimi", [window("weekly", "weekly", 59)]);
     kimi.state.untrustedWindowIds = ["limit:2"];
@@ -693,7 +776,7 @@ describe("quota semantics", () => {
     expect(result.quotaSemantics).toEqual({
       status: "partial",
       description:
-        "Kimi's valid weekly and five-hour account windows are known bounds, but unrecognized or unparsed limits may add bounds, so effective remaining is unknown.",
+        "Kimi's valid weekly, five-hour, and monthly-total account windows are known bounds, but unrecognized or unparsed limits may add bounds, so effective remaining is unknown. The monthly code window is the code-typed share of that monthly total rather than a separate allowance, so it adds no bound.",
       effectiveAvailability: [
         {
           scope: "all_models",
@@ -751,6 +834,39 @@ describe("quota semantics", () => {
         }),
       }),
     ]);
+  });
+
+  it("ranks the Z.AI all-models scope when an idle five-hour window has not been triggered yet", () => {
+    const result = withQuotaSemantics(
+      provider("zai", [
+        window("five_hour", "session", 100, {
+          percentUsed: 0,
+          windowSeconds: 18_000,
+          // No resetsAt: the vendor omits nextResetTime while the session
+          // window is idle, so the 5h clock has not started. This must not
+          // block spendPriority.
+        }),
+        window("weekly", "weekly", 51, {
+          windowSeconds: WEEK_SECONDS,
+          resetsAt: weeklyResetsAt(0.6),
+        }),
+      ]),
+      GENERATED_AT,
+    );
+
+    const allModels = result.quotaSemantics?.effectiveAvailability.find(
+      (item) => item.scope === "all_models",
+    );
+    expect(allModels?.status).toBe("known");
+    expect(allModels?.selection?.status).toBe("known");
+    expect(allModels?.selection?.unmeasurableWindowIds).toBeUndefined();
+    expect(typeof allModels?.selection?.[SELECTION_SCALAR_KEY]).toBe("number");
+
+    const fiveHour = result.windows.find((item) => item.id === "five_hour");
+    expect(fiveHour?.pace).toEqual({
+      status: "unknown",
+      reason: "missing_cycle",
+    });
   });
 
   it("keeps the Z.AI tool window out of the all-models bound when limits are unresolved", () => {

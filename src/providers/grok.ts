@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readCachedProvider } from "../cache.js";
+import { readCachedProvider, retireCachedSlot } from "../cache.js";
 import { readJsonFileResult, type JsonFileReadResult } from "../lib/fs.js";
 import { providerFetch } from "../lib/http.js";
 import { nowIso, retryAfterToIso } from "../lib/time.js";
@@ -19,6 +19,7 @@ import {
   failedProvider,
   sourceNames,
   staleFromCache,
+  staleUnlessSignOut,
   statusFromError,
   successProvider,
 } from "./common.js";
@@ -97,6 +98,12 @@ type GrokAttemptCredential =
   | { kind: "cli"; credentials: GrokCredentials }
   | { kind: "pi-credits"; credentials: GrokCredentials }
   | { kind: "pi-local" };
+
+type GrokAttemptOutcome =
+  | Exclude<AttemptOutcome<NormalizedGrokQuota>, { kind: "transient" }>
+  | (Extract<AttemptOutcome<NormalizedGrokQuota>, { kind: "transient" }> & {
+      operation: "consumer_quota" | "model_auth";
+    });
 
 type CredentialCandidate = GrokCredentials & {
   scope?: string;
@@ -229,9 +236,17 @@ async function fetchQuotaWithDependencies(
   const piCandidates = candidates.filter(
     (candidate) => candidate.source === PI_XAI_CREDENTIAL_SOURCE,
   );
-  let cliSelection = await selectCredential(cliCandidates, (candidate) =>
-    attemptGrokCandidate(candidate.credential),
-  );
+  let consumerTransient = false;
+  const attempt = async (
+    candidate: SelectionCandidate<GrokAttemptCredential>,
+  ) => {
+    const outcome = await attemptGrokCandidate(candidate.credential);
+    if (outcome.kind === "transient") {
+      consumerTransient = outcome.operation === "consumer_quota";
+    }
+    return outcome;
+  };
+  let cliSelection = await selectCredential(cliCandidates, attempt);
   const cliPasses: Array<{
     state: CredentialState;
     selection: CredentialSelection<NormalizedGrokQuota>;
@@ -250,7 +265,7 @@ async function fetchQuotaWithDependencies(
       cliState = refresh.state;
       cliSelection = await selectCredential(
         cliCandidatesFor(cliState),
-        (candidate) => attemptGrokCandidate(candidate.credential),
+        attempt,
       );
       cliPasses.push({ state: cliState, selection: cliSelection });
     }
@@ -263,9 +278,7 @@ async function fetchQuotaWithDependencies(
   const piSelection = await selectCredential<
     GrokAttemptCredential,
     NormalizedGrokQuota
-  >(shouldTryPi ? piCandidates : [], (candidate) =>
-    attemptGrokCandidate(candidate.credential),
-  );
+  >(shouldTryPi ? piCandidates : [], attempt);
   const selection = mergeIndependentSelections(cliSelection, piSelection);
 
   const attempts = grokAttempts(
@@ -274,16 +287,7 @@ async function fetchQuotaWithDependencies(
     selection,
     refreshAttempt,
   );
-  const cliResults = selection.results.filter(
-    (result) => result.source === GROK_SOURCE,
-  );
-  const cliResult =
-    cliResults.find((result) => result.outcome === "quota") ??
-    cliResults.find((result) => result.outcome === "transient") ??
-    [...cliResults].reverse().find((result) => result.outcome === "rejected") ??
-    cliResults.find((result) => result.outcome !== "not_tried");
-  const consumerTransient = selection.transientError !== undefined;
-  const consumerError = selection.transientError ?? cliResult?.error;
+  const transientError = selection.transientError;
   const retryAfter = selection.retryAfter;
   const cliRefreshNeeded = selection.results.some(
     (result) =>
@@ -316,23 +320,22 @@ async function fetchQuotaWithDependencies(
       ? "usable"
       : classifyGrokAuthStatus(cliState, piResolution, selection);
 
-  if (authStatus === "usable") {
+  if (authStatus === "usable" || transientError !== undefined) {
     // Valid model auth (CLI and/or Pi) without consumer windows is not logout.
     const cached = readCachedProvider("grok");
-    if (
-      cached?.source === GROK_SOURCE &&
-      (consumerTransient || cliState.status !== "available")
-    ) {
-      const stale = staleFromCache(
-        cached,
-        (consumerTransient ? consumerError : undefined) ??
-          GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
-        sourceNames(attempts),
-        attempts,
-      );
+    const stale =
+      cached?.source === GROK_SOURCE && consumerTransient
+        ? staleFromCache(
+            cached,
+            transientError ?? GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
+            sourceNames(attempts),
+            attempts,
+          )
+        : undefined;
+    if (stale) {
       return withAuthStatus(
-        consumerTransient ? withUsageFetchFailure(stale) : stale,
-        "usable",
+        withUsageFetchFailure(stale),
+        authStatus,
         cliRefreshNeeded,
       );
     }
@@ -342,22 +345,19 @@ async function fetchQuotaWithDependencies(
         label: "Grok",
         status: retryAfter
           ? "rate_limited"
-          : consumerTransient
-            ? statusFromError(
-                consumerError ?? GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
-              )
+          : transientError !== undefined
+            ? statusFromError(transientError)
             : "unavailable",
         error:
-          consumerError && consumerTransient
-            ? consumerError
-            : selection.outcome === "live_no_quota"
-              ? GROK_MODEL_AUTH_WITHOUT_QUOTA_ERROR
-              : GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
+          transientError ??
+          (selection.outcome === "live_no_quota"
+            ? GROK_MODEL_AUTH_WITHOUT_QUOTA_ERROR
+            : GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR),
         retryAfter,
         sourcesTried: sourceNames(attempts),
         attempts,
       }),
-      "usable",
+      authStatus,
       cliRefreshNeeded,
     );
   }
@@ -374,13 +374,17 @@ async function fetchQuotaWithDependencies(
   }
 
   const cached = readCachedProvider("grok");
-  if (cached?.source === GROK_SOURCE) {
-    return withAuthStatus(
-      staleFromCache(cached, finalError, sourceNames(attempts), attempts),
-      authStatus,
-      cliRefreshNeeded,
-    );
-  }
+  const stale = staleUnlessSignOut(
+    cached?.source === GROK_SOURCE ? cached : undefined,
+    finalError,
+    sourceNames(attempts),
+    attempts,
+    {
+      definitive: finalError === GROK_SIGN_IN_REQUIRED_ERROR,
+      retire: () => retireCachedSlot("grok"),
+    },
+  );
+  if (stale) return withAuthStatus(stale, authStatus, cliRefreshNeeded);
 
   return withAuthStatus(
     failedProvider({
@@ -501,7 +505,7 @@ function mergeIndependentSelections<R>(
 
 async function attemptGrokCandidate(
   payload: GrokAttemptCredential,
-): Promise<AttemptOutcome<NormalizedGrokQuota>> {
+): Promise<GrokAttemptOutcome> {
   if (payload.kind === "cli" || payload.kind === "pi-credits") {
     try {
       const quota = await fetchGrokConsumerQuota(payload.credentials);
@@ -513,18 +517,26 @@ async function attemptGrokCandidate(
           kind: "transient",
           error: message,
           retryAfter: error.retryAfter,
+          operation: "consumer_quota",
         };
       }
       if (isDefinitiveGrokAuthError(message)) {
         if (payload.credentials.modelProbeUrl) {
-          return probeGrokModelAccess(
+          const probe = await probeGrokModelAccess(
             payload.credentials.modelProbeUrl,
             payload.credentials.key,
           );
+          return probe.kind === "transient"
+            ? { ...probe, operation: "model_auth" }
+            : probe;
         }
         return { kind: "rejected", error: message };
       }
-      return { kind: "transient", error: message };
+      return {
+        kind: "transient",
+        error: message,
+        operation: "consumer_quota",
+      };
     }
   }
   // Pi API keys authenticate xAI model calls, not grok.com consumer credits.
@@ -552,6 +564,8 @@ async function probeGrokModelAccess(
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
         },
+        credentials: "omit",
+        redirect: "manual",
         signal: controller.signal,
       });
     } catch (error) {
@@ -857,14 +871,25 @@ export function normalizeGrokConsumerPayload(
     periodStart !== undefined &&
     resetsAt !== undefined;
 
+  const windowKind =
+    periodType === "weekly" || periodType === "monthly"
+      ? periodType
+      : "credits";
+  const windowLabel =
+    periodType === "weekly"
+      ? "week"
+      : periodType === "monthly"
+        ? "month"
+        : "credits";
+
   const windows: QuotaWindow[] = [];
   const sharedExplicit = floatAt(config, 1);
   if (sharedExplicit !== undefined || validCurrentPeriod) {
     const percentUsed = clampExactPercent(sharedExplicit ?? 0);
     windows.push({
       id: "credits",
-      label: "credits",
-      kind: "credits",
+      label: windowLabel,
+      kind: windowKind,
       percentUsed,
       percentRemaining: 100 - percentUsed,
       ...(periodStart ? { startsAt: periodStart } : {}),
@@ -886,7 +911,7 @@ export function normalizeGrokConsumerPayload(
     windows.push({
       id: `product:${productName.id}`,
       label: productName.label,
-      kind: "credits",
+      kind: windowKind,
       percentUsed,
       percentRemaining: 100 - percentUsed,
       ...(periodStart ? { startsAt: periodStart } : {}),

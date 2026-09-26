@@ -119,9 +119,10 @@ function unavailableWithCache(
 ): ProviderQuota {
   const attempt = { source: SOURCE, status, error } as const;
   const cached = dependencies.readCachedProvider("kiro");
-  return cached
-    ? staleFromCache(cached, error, [SOURCE], [attempt])
-    : unavailable(error, status);
+  const stale = cached
+    ? staleFromCache(cached, error, [SOURCE], [attempt], dependencies.now())
+    : undefined;
+  return stale ?? unavailable(error, status);
 }
 
 function unavailable(
