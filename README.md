@@ -857,12 +857,12 @@ every `~/.kiro/tasks/*/*.meta.json` file without checking whether the owning
 Kiro session is alive. `KIRO_HOME` does not move that task root. quota-axi
 therefore runs a fail-closed idle preflight before every launch:
 
-| Preflight finding                                                    | Result                               |
-| -------------------------------------------------------------------- | ------------------------------------ |
-| A `kiro-cli`, `kiro-cli-chat`, or Kiro IDE process of this user runs | Skip with `kiro_busy_process_active` |
-| Task metadata has a `running` or `queued` execution status           | Skip with `kiro_busy_task_active`    |
-| Process list or task metadata cannot be read or parsed               | Skip with `kiro_busy_unverified`     |
-| No Kiro process and no active task                                   | Launch the read                      |
+| Preflight finding                                                                                                              | Result                               |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| A `kiro-cli`, `kiro-cli-chat`, or Kiro IDE process of this user runs (`kiro` on Linux, any process inside `Kiro.app` on macOS) | Skip with `kiro_busy_process_active` |
+| Task metadata has a `running` or `queued` execution status                                                                     | Skip with `kiro_busy_task_active`    |
+| Process list or task metadata cannot be read or parsed                                                                         | Skip with `kiro_busy_unverified`     |
+| No Kiro process and no active task                                                                                             | Launch the read                      |
 
 A skipped read reports `unavailable` with that reason. Kiro windows carry only
 a reset date, not a timestamp, so the shared stale-cache bound does not serve
@@ -898,6 +898,7 @@ its reset as a calendar date, which is kept as `resetText` without an invented
 time, so pace, runway, and effective availability stay unknown. Auth
 inspection reports `skipped` with `kiro_auth_vendor_owned`, because quota-axi
 does not open Kiro's sign-in store.
+Kiro is excluded from `--max-age` / `QUOTA_AXI_MAX_AGE` fresh reuse, because quota-axi cannot observe a Kiro sign-in switch.
 
 See the [transport assessment](docs/kiro-v3-transport-assessment.md) for
 vendor provenance, lifecycle evidence, and the task-root isolation test.

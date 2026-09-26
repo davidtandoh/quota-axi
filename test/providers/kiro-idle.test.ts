@@ -64,20 +64,38 @@ describe("Kiro idle preflight", () => {
     },
   );
 
-  it.each(["kiro-cli", "kiro-cli-chat", "Kiro"])(
-    "blocks while a %s process runs, before reading tasks",
-    async (name) => {
-      const readDir = vi.fn();
-      expect(
-        await checkKiroIdle({
-          home: () => home(),
-          listExecutables: () => Promise.resolve(["zsh", name]),
-          readDir,
-        }),
-      ).toEqual({ idle: false, reason: "kiro_busy_process_active" });
-      expect(readDir).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    "kiro-cli",
+    "kiro-cli-chat",
+    "kiro",
+    "Kiro",
+    "/usr/local/bin/kiro-cli",
+    "/Applications/Kiro.app/Contents/MacOS/Electron",
+    "/Applications/Kiro.app/Contents/Frameworks/Kiro Helper (Renderer).app/Contents/MacOS/Kiro Helper (Renderer)",
+  ])("blocks while a %s process runs, before reading tasks", async (name) => {
+    const readDir = vi.fn();
+    expect(
+      await checkKiroIdle({
+        home: () => home(),
+        listExecutables: () => Promise.resolve(["zsh", name]),
+        readDir,
+      }),
+    ).toEqual({ idle: false, reason: "kiro_busy_process_active" });
+    expect(readDir).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "/Applications/Kiro CLI.app/Contents/MacOS/kiro_cli_desktop",
+    "/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-term",
+    "/Applications/Other.app/Contents/MacOS/Electron",
+  ])("does not treat %s as a Kiro task owner", async (path) => {
+    expect(
+      await checkKiroIdle({
+        home: () => home(),
+        listExecutables: () => Promise.resolve(["/bin/zsh", path]),
+      }),
+    ).toEqual({ idle: true });
+  });
 
   it("fails closed when the process list is unavailable", async () => {
     expect(

@@ -586,7 +586,7 @@ function isCacheExcluded(provider: ProviderQuota): boolean {
 }
 
 function excludeFromFreshReuse(provider: ProviderId): boolean {
-  return provider === "muse";
+  return provider === "muse" || provider === "kiro";
 }
 
 function cacheIdentity(provider: ProviderQuota): string {

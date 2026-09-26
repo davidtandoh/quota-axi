@@ -18,12 +18,15 @@ import {
   readCachedDevinProvider,
   readCachedMiniMaxProvider,
   readCachedProvider,
+  readReusableProviders,
   retireCodexAccount,
+  stampReadingInputs,
   writeCachedProviders,
   stampCodexStoredAccountId,
 } from "../src/cache.js";
 import { annotateQuotaAdvice } from "../src/advice.js";
 import { cacheFilePath, claudeCredentialContextId } from "../src/lib/fs.js";
+import { withInputTrace } from "../src/lib/input-trace.js";
 import {
   clearCommandCodeReadingContextId,
   commandCodeCacheContextId,
@@ -61,6 +64,20 @@ afterEach(() => {
 });
 
 describe("quota cache", () => {
+  it("never stamps a Kiro reading for fresh reuse", async () => {
+    useTempCache();
+    const { inputs } = await withInputTrace(async () => undefined);
+    const claude = quota("claude", 30);
+    const kiro = quota("kiro", 40);
+    stampReadingInputs(claude, inputs);
+    stampReadingInputs(kiro, inputs);
+    writeCachedProviders([claude, kiro]);
+    const now = Date.parse("2026-07-06T18:11:00Z");
+
+    expect(readReusableProviders("claude", 3600, now)).toHaveLength(1);
+    expect(readReusableProviders("kiro", 3600, now)).toBeUndefined();
+  });
+
   it("serves Codex stale quota only for a matching stored account", () => {
     useTempCache();
     const snapshot = quota("codex", 42);

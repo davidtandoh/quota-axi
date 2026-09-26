@@ -32,14 +32,17 @@ const MAX_META_FILES = 500;
 const ACTIVE_STATUSES = new Set(["running", "queued"]);
 /**
  * Executable names that can own Kiro tasks: the CLI launcher, its chat
- * process (which hosts the V3 engine), and the Kiro IDE. The desktop
- * companion (`kiro_cli_desktop`) and terminal integration do not run tasks.
+ * process (which hosts the V3 engine), and the Kiro IDE on Linux. The macOS
+ * IDE runs as `Electron` and helpers inside `Kiro.app`, so it is matched by
+ * bundle path. The desktop companion (`Kiro CLI.app`, `kiro_cli_desktop`) and
+ * terminal integration do not run tasks.
  */
-const KIRO_EXECUTABLES = new Set(["kiro-cli", "kiro-cli-chat", "Kiro"]);
+const KIRO_EXECUTABLES = new Set(["kiro-cli", "kiro-cli-chat", "kiro", "Kiro"]);
+const KIRO_IDE_BUNDLE = "/Kiro.app/";
 
 type Dependencies = {
   home: () => string;
-  /** Executable names of the current user's processes, or undefined. */
+  /** Executable paths of the current user's processes, or undefined. */
   listExecutables: () => Promise<string[] | undefined>;
   readDir: (path: string) => Promise<{ name: string; isDir: boolean }[]>;
   readFile: (path: string, maxBytes: number) => Promise<Buffer>;
@@ -62,7 +65,7 @@ export async function checkKiroIdle(
 
   const executables = await dependencies.listExecutables();
   if (!executables) return { idle: false, reason: "kiro_busy_unverified" };
-  if (executables.some((name) => KIRO_EXECUTABLES.has(name)))
+  if (executables.some(isKiroExecutable))
     return { idle: false, reason: "kiro_busy_process_active" };
 
   return scanTasks(dependencies, join(dependencies.home(), ".kiro", "tasks"));
@@ -139,11 +142,14 @@ async function listExecutables(): Promise<string[] | undefined> {
     return output
       .split("\n")
       .map((line) => /^\s*\d+\s+(.+?)\s*$/.exec(line)?.[1])
-      .filter((command): command is string => command !== undefined)
-      .map((command) => basename(command));
+      .filter((command): command is string => command !== undefined);
   } catch {
     return undefined;
   }
+}
+
+function isKiroExecutable(path: string): boolean {
+  return KIRO_EXECUTABLES.has(basename(path)) || path.includes(KIRO_IDE_BUNDLE);
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
