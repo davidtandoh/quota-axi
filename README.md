@@ -15,7 +15,7 @@ Quota CLI for agents - designed with [AXI](https://axi.md) (Agent eXperience Int
 Agents need quota state before they choose where work can safely run.
 Vendor dashboards are not shaped for shell automation, and local CLIs expose different windows, resets, and auth sources.
 
-quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, Z.AI, Alibaba, OpenCode Go, Antigravity (`agy`), Command Code, MiniMax, MiMo, DeepSeek, OpenRouter, ElevenLabs, Devin, and Muse quota windows in one [AXI](https://axi.md)-shaped call.
+quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, Z.AI, Alibaba, OpenCode Go, Antigravity (`agy`), Command Code, MiniMax, MiMo, DeepSeek, OpenRouter, ElevenLabs, Devin, Muse, and Kiro quota windows in one [AXI](https://axi.md)-shaped call.
 It is data only: it never routes, recommends a provider, model, harness, credential, or route, proxies, intercepts, logs in, imports browser cookies, or mints or rotates a credential. Muse's only quota read also issues an API key server-side, which quota-axi discards unread and rate-bounds ([Muse provider notes](#provider-notes)). When the same stored access token is expired, carries a refresh token, and is definitively rejected, quota-axi may delegate renewal to that vendor's own non-interactive CLI command and re-read the result ([Delegated credential refresh](#delegated-credential-refresh)). Default output has no ordering preference. The opt-in `models --sort runway` surface applies only its documented deterministic comparator to quota evidence, preserves all evidence and explicit ties, and is not a recommendation. It publishes one derived per-scope comparative selection signal, [`selection`](#per-scope-selection-signal), as data computed from figures it already reports; the consumer, not quota-axi, does any routing or ranking with it.
 
 - **Official sources** - quota-axi reads local provider auth sources and calls first-party quota, usage, billing, entitlement, local loopback, or read-only credential-liveness endpoints used by the local agents, with read-only CLI probes where applicable. Vendor-command boundaries and the explicit inference exception are documented under [Safety guarantees](#safety-guarantees).
@@ -322,24 +322,24 @@ It is generated from `src/skill.ts` as a minimal stub: discovery frontmatter, wh
 
 ### Flags
 
-| Flag                                                                                                                                              | Description                                                                                                            |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `--provider claude,codex,cursor,copilot,grok,kimi,zai,agy,alibaba,opencode-go,commandcode,minimax,mimo,deepseek,openrouter,elevenlabs,devin,muse` | Scope providers; repeat to union in first-seen order (`--provider zai --provider codex` equals `--provider zai,codex`) |
-| `--json`                                                                                                                                          | Emit normalized JSON instead of TOON for quota, auth, or models                                                        |
-| `--full`                                                                                                                                          | Include audit and derivation details                                                                                   |
-| `--tui`                                                                                                                                           | Render the live human terminal report instead of TOON (quota only)                                                     |
-| `--refresh 30s\|5m\|1h`                                                                                                                           | Live `--tui` refresh interval, default 5m (30s-24h)                                                                    |
-| `--once`                                                                                                                                          | Render one `--tui` frame and exit instead of staying live                                                              |
-| `--all`                                                                                                                                           | Draw not-set-up providers as full `--tui` cards                                                                        |
-| `--allow-keychain-prompt`                                                                                                                         | Permit native secure-store access that could prompt (macOS or Windows)                                                 |
-| `--allow-claude-inference`                                                                                                                        | Spend one bounded native Claude inference to read env-token quota headers                                              |
-| `--no-credential-refresh`                                                                                                                         | Never run a vendor CLI's own non-interactive credential refresh                                                        |
-| `--max-age 0\|90s\|2m`                                                                                                                            | Opt in to reusing a fresh reading up to this old instead of asking the vendor; `0` always asks                         |
-| `--profile-only`                                                                                                                                  | Read one explicitly selected Claude or Codex credential file (quota only)                                              |
-| `--intelligence high\|medium\|low`                                                                                                                | Filter `models` by editorial intelligence bucket                                                                       |
-| `--sort runway`                                                                                                                                   | Explicitly sort `models` by documented usable-runway evidence                                                          |
-| `-h`, `--help`                                                                                                                                    | Print terse [AXI](https://axi.md) help                                                                                 |
-| `-v`, `-V`, `--version`                                                                                                                           | Print version                                                                                                          |
+| Flag                                                                                                                                                   | Description                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `--provider claude,codex,cursor,copilot,grok,kimi,zai,agy,alibaba,opencode-go,commandcode,minimax,mimo,deepseek,openrouter,elevenlabs,devin,muse,kiro` | Scope providers; repeat to union in first-seen order (`--provider zai --provider codex` equals `--provider zai,codex`) |
+| `--json`                                                                                                                                               | Emit normalized JSON instead of TOON for quota, auth, or models                                                        |
+| `--full`                                                                                                                                               | Include audit and derivation details                                                                                   |
+| `--tui`                                                                                                                                                | Render the live human terminal report instead of TOON (quota only)                                                     |
+| `--refresh 30s\|5m\|1h`                                                                                                                                | Live `--tui` refresh interval, default 5m (30s-24h)                                                                    |
+| `--once`                                                                                                                                               | Render one `--tui` frame and exit instead of staying live                                                              |
+| `--all`                                                                                                                                                | Draw not-set-up providers as full `--tui` cards                                                                        |
+| `--allow-keychain-prompt`                                                                                                                              | Permit native secure-store access that could prompt (macOS or Windows)                                                 |
+| `--allow-claude-inference`                                                                                                                             | Spend one bounded native Claude inference to read env-token quota headers                                              |
+| `--no-credential-refresh`                                                                                                                              | Never run a vendor CLI's own non-interactive credential refresh                                                        |
+| `--max-age 0\|90s\|2m`                                                                                                                                 | Opt in to reusing a fresh reading up to this old instead of asking the vendor; `0` always asks                         |
+| `--profile-only`                                                                                                                                       | Read one explicitly selected Claude or Codex credential file (quota only)                                              |
+| `--intelligence high\|medium\|low`                                                                                                                     | Filter `models` by editorial intelligence bucket                                                                       |
+| `--sort runway`                                                                                                                                        | Explicitly sort `models` by documented usable-runway evidence                                                          |
+| `-h`, `--help`                                                                                                                                         | Print terse [AXI](https://axi.md) help                                                                                 |
+| `-v`, `-V`, `--version`                                                                                                                                | Print version                                                                                                          |
 
 ### Profile-only quota reads
 
@@ -364,7 +364,7 @@ Ninety seconds absorbs a burst and moves a five-hour window's elapsed time by ha
 A reading is reused only when all of these hold:
 
 - It came from the same credential selection: every environment variable a provider consults to choose a profile, store, credential, CLI, or deployment (`CREDENTIAL_SELECTION_ENV` in `src/lib/reuse-context.ts`) has the value it had, plus the same home directory and user. The values are hashed together and never stored.
-- No local file the reading was derived from has changed. Every file quota-axi opened for that provider, present or absent, is recorded with its identity, size, and modification times (never its contents), so a login that rewrites a credential store, or a Kimi Code configuration that now names another deployment, is read again. A store read through a vendor tool (the macOS Keychain, Cursor's SQLite database, a vendor CLI) is identified by the selection that names it, the same boundary the stale-cache context uses, so an in-place Keychain login switch can be reused for at most `--max-age`. Muse is excluded from this path: its macOS credential lives in a Keychain item that is not a traced file, so a login switch cannot be detected here, and `--max-age` never serves a Muse reading. The five-minute key-endpoint ledger remains the bound on those vendor calls.
+- No local file the reading was derived from has changed. Every file quota-axi opened for that provider, present or absent, is recorded with its identity, size, and modification times (never its contents), so a login that rewrites a credential store, or a Kimi Code configuration that now names another deployment, is read again. A store read through a vendor tool (the macOS Keychain, Cursor's SQLite database, a vendor CLI) is identified by the selection that names it, the same boundary the stale-cache context uses, so an in-place Keychain login switch can be reused for at most `--max-age`. Muse is excluded from this path: its macOS credential lives in a Keychain item that is not a traced file, so a login switch cannot be detected here, and `--max-age` never serves a Muse reading. The five-minute key-endpoint ledger remains the bound on those vendor calls. Kiro is excluded for the same reason; see [Kiro provider notes](#provider-notes).
 - Every lane the provider reported in that reading was a fresh reading with windows, so part of an account-expanded report is never served, and a failed, stale, or window-less lane makes the next read ask the vendor.
 - It is younger than `--max-age`, and no window has reached its own reported `resetsAt`, because a number that has stopped being true is never served ([#257](https://github.com/kunchenguid/quota-axi/issues/257)).
 
@@ -843,6 +843,66 @@ The Claude and Codex rows describe default discovery; [`--profile-only`](#profil
 
 ### Provider notes
 
+**Kiro CLI V3**
+
+`--provider kiro` reads Kiro credits through the Kiro CLI's own Agent Client
+Protocol (ACP) server. quota-axi starts `kiro-cli acp --agent-engine v3
+--auth-method cli` directly (no shell), sends only `initialize` and
+`_kiro/account/getUsage`, and never opens a session or sends a prompt, so the
+read spends no Kiro credits. Kiro resolves its own sign-in; quota-axi never
+reads Kiro credentials.
+
+Starting any Kiro V3 ACP process clears `running` and `queued` statuses in
+every `~/.kiro/tasks/*/*.meta.json` file without checking whether the owning
+Kiro session is alive. `KIRO_HOME` does not move that task root. quota-axi
+therefore runs a fail-closed idle preflight before every launch:
+
+| Preflight finding                                                                                                              | Result                               |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| A `kiro-cli`, `kiro-cli-chat`, or Kiro IDE process of this user runs (`kiro` on Linux, any process inside `Kiro.app` on macOS) | Skip with `kiro_busy_process_active` |
+| Task metadata has a `running` or `queued` execution status                                                                     | Skip with `kiro_busy_task_active`    |
+| Process list or task metadata cannot be read or parsed                                                                         | Skip with `kiro_busy_unverified`     |
+| No Kiro process and no active task                                                                                             | Launch the read                      |
+
+A skipped read reports `unavailable` with that reason. Kiro windows carry only
+a reset date, not a timestamp, so the shared stale-cache bound does not serve
+an older Kiro snapshot in their place. A task that
+starts in the few seconds between the preflight and Kiro's own startup is not
+covered.
+
+The read uses an empty working directory and a private `KIRO_HOME` under
+quota-axi's cache directory (`kiro-acp/`), so Kiro's settings and session
+files for the read stay out of `~/.kiro`. Kiro still writes its engine log
+under `~/.kiro/logs`. The exchange is bounded to 15 seconds and 1 MiB of
+output. After a valid response, quota-axi ends standard input and publishes
+the reading only after the process exits 0 and its streams close. On a timeout
+or protocol failure, quota-axi ends standard input, then sends `SIGTERM` and
+finally `SIGKILL` to the ACP process group, two seconds apart, if it is still
+running. Stderr is read only to recognize the sign-in failure and is never
+printed or cached.
+
+| Setting or condition                                | Behavior                                                                     |
+| --------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `QUOTA_AXI_KIRO_NATIVE=0` (or `false`, `off`, `no`) | Never launch Kiro; report `kiro_native_disabled`                             |
+| `QUOTA_AXI_KIRO_ENGINE=v3` (default)                | ACP `--agent-engine`; an unknown value fails closed                          |
+| `--no-credential-refresh`                           | Skip with `kiro_refresh_disabled`; Kiro may rotate its token during the read |
+| `--profile-only`                                    | Unsupported for Kiro                                                         |
+| Kiro signed out                                     | `auth_required` with `kiro_not_logged_in`                                    |
+| `kiro-cli` not on `PATH`                            | `unavailable` with `kiro_cli_unavailable`                                    |
+
+The plan meter becomes one `credits` window: used credits divided by the
+allowance (for example 2,000 credits per cycle) give used percent, and
+`credits.remaining` carries the absolute remaining credits when the plan meter
+is the only pool. Bonus and add-on pools stay separate windows. Kiro reports
+its reset as a calendar date, which is kept as `resetText` without an invented
+time, so pace, runway, and effective availability stay unknown. Auth
+inspection reports `skipped` with `kiro_auth_vendor_owned`, because quota-axi
+does not open Kiro's sign-in store.
+Kiro is excluded from `--max-age` / `QUOTA_AXI_MAX_AGE` fresh reuse, because quota-axi cannot observe a Kiro sign-in switch.
+
+See the [transport assessment](docs/kiro-v3-transport-assessment.md) for
+vendor provenance, lifecycle evidence, and the task-root isolation test.
+
 **Claude**
 
 - quota-axi mirrors Claude Code's Keychain account selector: nonempty `USER`, otherwise the operating-system username, validated against Claude Code's safe account pattern with the same `claude-code-user` fallback. Metadata discovery filters to that account, and exact presence/value reads require it plus the selected service. There is no ambiguous service-only fallback.
@@ -1027,12 +1087,13 @@ quota-axi reports quota; it is not an auth app. It never mints a credential, nev
 
 Instead, when the same stored access token is expired, carries a refresh token, **and** is definitively rejected, quota-axi may run the vendor CLI's own smallest non-interactive command that already owns rotation, then re-read the store that CLI rewrote and retry the same read-only quota request once. Rotation is always the vendor's; quota-axi only reads the result. A provider gets a delegate only when that command's rotation is established from the vendor's own CLI. Leaving a provider read-only is always allowed. Route any new delegate through `src/providers/delegated-refresh.ts` rather than spawning ad hoc. `ProviderOptions.refreshCredentials` gates it: `--no-credential-refresh` turns it off, and the read-only `auth` command always passes `false`. Tests pass it explicitly so no test can spawn a vendor CLI by accident.
 
-| Provider                                                                                                                                          | Vendor-owned recovery path        | Store the vendor rewrites                             |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------- |
-| Claude                                                                                                                                            | `claude doctor` delegate          | the Claude Code Keychain item, or `.credentials.json` |
-| Codex                                                                                                                                             | existing `app-server` quota probe | `$CODEX_HOME/auth.json`                               |
-| Grok                                                                                                                                              | `grok models` delegate            | `$GROK_HOME/auth.json`                                |
-| Cursor, GitHub Copilot, Kimi, Z.AI, Alibaba, OpenCode Go, Antigravity, Command Code, MiniMax, MiMo, DeepSeek, OpenRouter, ElevenLabs, Devin, Muse | none                              | read-only; see the per-provider notes below           |
+| Provider                                                                                                                                          | Vendor-owned recovery path           | Store the vendor rewrites                             |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------- |
+| Claude                                                                                                                                            | `claude doctor` delegate             | the Claude Code Keychain item, or `.credentials.json` |
+| Codex                                                                                                                                             | existing `app-server` quota probe    | `$CODEX_HOME/auth.json`                               |
+| Grok                                                                                                                                              | `grok models` delegate               | `$GROK_HOME/auth.json`                                |
+| Kiro                                                                                                                                              | the `kiro-cli acp` usage read itself | Kiro's own sign-in store, never opened by quota-axi   |
+| Cursor, GitHub Copilot, Kimi, Z.AI, Alibaba, OpenCode Go, Antigravity, Command Code, MiniMax, MiMo, DeepSeek, OpenRouter, ElevenLabs, Devin, Muse | none                                 | read-only; see the per-provider notes below           |
 
 The Claude and Grok delegated runs are bounded the same way:
 
@@ -1069,8 +1130,8 @@ Providers with no established non-interactive rotation command stay read-only on
 - It never prints, logs, or caches credential values.
 - It never mints, rotates, or writes a credential, and never performs a refresh-token exchange. Credential renewal is always delegated to the vendor CLI that owns the store (see [Delegated credential refresh](#delegated-credential-refresh)). Muse is the one provider whose only quota read, the Muse CLI's own startup request, also returns an API key; that read is verified to return the account's standing key rather than mint a fresh one, quota-axi discards the key while parsing, never stores or prints it, and bounds how often it sends the request (see [Muse provider notes](#provider-notes)).
 - It never retains, prints, logs, renders, caches, sends, or exchanges a refresh token's value. The Pi credential brokers read a stored refresh value only to derive a usability boolean - whether it is a usable literal secret rather than absent or an environment, template, or command reference - and discard it immediately; elsewhere only its presence is checked, as evidence that the vendor can still recover.
-- It never launches the Cursor, GitHub (`gh`), Copilot, Pi, Kimi, MiniMax, OpenCode, Command Code, ElevenLabs, Devin, or Muse CLIs. It runs the read-only Alibaba `bl` usage command, the declared read-only Codex app-server probe, Antigravity's noninteractive structured `/quota` read (`agy -p "/quota"`), preferred ahead of its loopback access, and the two declared refresh delegates (`claude doctor`, `grok models`); none starts an agent session or spends the quota being measured. The one explicit exception is `--allow-claude-inference`, whose fixed native Claude request spends inference quota and is documented above.
-- It never signals or kills a delegated refresh. A vendor that outruns quota-axi's wait is left to finish its own token exchange, and quota-axi reports an unconfirmed refresh instead of a credential verdict.
+- It never launches the Cursor, GitHub (`gh`), Copilot, Pi, Kimi, MiniMax, OpenCode, Command Code, ElevenLabs, Devin, or Muse CLIs. It runs the read-only Alibaba `bl` usage command, the declared read-only Codex app-server probe, Antigravity's noninteractive structured `/quota` read (`agy -p "/quota"`), preferred ahead of its loopback access, the Kiro ACP usage read (`kiro-cli acp`, only after an idle preflight; see [Kiro provider notes](#provider-notes)), and the two declared refresh delegates (`claude doctor`, `grok models`); none starts an agent session or spends the quota being measured. The one explicit exception is `--allow-claude-inference`, whose fixed native Claude request spends inference quota and is documented above.
+- It never signals or kills a delegated refresh. A vendor that outruns quota-axi's wait is left to finish its own token exchange, and quota-axi reports an unconfirmed refresh instead of a credential verdict. The Kiro ACP usage read is not a delegated refresh: after a timeout or protocol failure quota-axi ends its input and then terminates that process group.
 - It never routes, ranks a winner, or orders providers preferentially. Derived comparative signals, including `effectiveAvailability[].selection`, are published as data for the consumer to act on.
 
 ### Cache

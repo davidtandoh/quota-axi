@@ -34,6 +34,9 @@ const NOT_SELECTING = new Set([
   "XDG_CACHE_HOME",
   // Names a snapshot file that answers instead of every provider
   "QUOTA_AXI_SNAPSHOT",
+  // Kiro's native-read opt-out and ACP engine; Kiro owns its sign-in store
+  "QUOTA_AXI_KIRO_NATIVE",
+  "QUOTA_AXI_KIRO_ENGINE",
 ]);
 
 /** A value no real environment holds, so the cache can be searched for it */

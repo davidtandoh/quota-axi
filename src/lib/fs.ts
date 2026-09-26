@@ -144,6 +144,19 @@ export function museKeyReadLedgerPath(): string {
   return join(cacheDirPath(), "muse-key-reads.json");
 }
 
+/**
+ * quota-axi-owned directories for the Kiro ACP usage read: an empty working
+ * directory and a private `KIRO_HOME`, so the vendor's settings and session
+ * files for that read land here instead of in the user's `~/.kiro`.
+ */
+export function kiroAcpDirs(): { cwd: string; kiroHome: string } {
+  const root = join(cacheDirPath(), "kiro-acp");
+  const dirs = { cwd: join(root, "cwd"), kiroHome: join(root, "kiro-home") };
+  for (const dir of Object.values(dirs))
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dirs;
+}
+
 function cacheDirPath(): string {
   const base = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
   return join(base, "quota-axi");

@@ -18,12 +18,15 @@ import {
   readCachedDevinProvider,
   readCachedMiniMaxProvider,
   readCachedProvider,
+  readReusableProviders,
   retireCodexAccount,
+  stampReadingInputs,
   writeCachedProviders,
   stampCodexStoredAccountId,
 } from "../src/cache.js";
 import { annotateQuotaAdvice } from "../src/advice.js";
 import { cacheFilePath, claudeCredentialContextId } from "../src/lib/fs.js";
+import { withInputTrace } from "../src/lib/input-trace.js";
 import {
   clearCommandCodeReadingContextId,
   commandCodeCacheContextId,
@@ -61,6 +64,20 @@ afterEach(() => {
 });
 
 describe("quota cache", () => {
+  it("never stamps a Kiro reading for fresh reuse", async () => {
+    useTempCache();
+    const { inputs } = await withInputTrace(async () => undefined);
+    const claude = quota("claude", 30);
+    const kiro = quota("kiro", 40);
+    stampReadingInputs(claude, inputs);
+    stampReadingInputs(kiro, inputs);
+    writeCachedProviders([claude, kiro]);
+    const now = Date.parse("2026-07-06T18:11:00Z");
+
+    expect(readReusableProviders("claude", 3600, now)).toHaveLength(1);
+    expect(readReusableProviders("kiro", 3600, now)).toBeUndefined();
+  });
+
   it("serves Codex stale quota only for a matching stored account", () => {
     useTempCache();
     const snapshot = quota("codex", 42);
@@ -142,6 +159,39 @@ describe("quota cache", () => {
       expect(readCachedProvider("copilot")?.windows[0]?.percentUsed).toBe(40);
     },
   );
+
+  it("preserves Kiro snapshots on unavailable evidence and clears only explicit fresh empty usage", () => {
+    useTempCache();
+    const kiro = quota("kiro", 25);
+    kiro.source = "cli-rpc";
+    kiro.windows = [
+      {
+        id: "usage:1",
+        label: "credits",
+        kind: "credits",
+        percentUsed: 25,
+        percentRemaining: 75,
+        resetText: "2026-10-01",
+      },
+    ];
+    writeCachedProviders([kiro]);
+    expect(readCachedProvider("kiro")?.windows).toEqual(kiro.windows);
+    expect(statSync(cacheFilePath()).mode & 0o777).toBe(0o600);
+    writeCachedProviders([
+      {
+        ...kiro,
+        windows: [],
+        state: {
+          ...kiro.state,
+          status: "unavailable",
+          error: "kiro_usage_unmeasured",
+        },
+      },
+    ]);
+    expect(readCachedProvider("kiro")?.windows).toEqual(kiro.windows);
+    writeCachedProviders([{ ...kiro, windows: [] }]);
+    expect(readCachedProvider("kiro")).toBeUndefined();
+  });
 
   it("ignores malformed matching entries", () => {
     useTempCache();

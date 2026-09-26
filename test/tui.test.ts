@@ -82,6 +82,65 @@ function displayColumns(text: string): number {
 }
 
 describe("renderQuotaTui structure", () => {
+  it("renders mocked Kiro meters with unknown relationships and a busy preflight honestly", () => {
+    const kiro: ProviderQuota = {
+      provider: "kiro",
+      label: "Kiro CLI V3",
+      source: "cli-rpc",
+      windows: [
+        {
+          id: "usage:1",
+          label: "credits",
+          kind: "credits",
+          percentUsed: 25,
+          percentRemaining: 75,
+          resetText: "2026-10-01",
+        },
+      ],
+      state: {
+        status: "fresh",
+        stale: false,
+        sourcesTried: ["kiro-v3-acp"],
+        refreshedAt: GENERATED_AT,
+      },
+    };
+    const response = {
+      generatedAt: GENERATED_AT,
+      schemaVersion: 5,
+      providers: [withQuotaSemantics(kiro, GENERATED_AT)],
+    };
+    const measured = renderQuotaTui(response, {
+      columns: 100,
+      colorDepth: "none",
+    });
+    expect(measured).toContain("● kiro");
+    expect(measured).toContain("per-window usage");
+    expect(measured).toContain("no combined bound");
+    expect(measured).toContain("75%");
+    expect(measured).not.toContain("empty in");
+    const unavailable = renderQuotaTui(
+      {
+        ...response,
+        providers: [
+          {
+            ...kiro,
+            source: "unavailable",
+            windows: [],
+            state: {
+              ...kiro.state,
+              status: "unavailable",
+              error: "kiro_busy_task_active",
+            },
+          },
+        ],
+      },
+      { columns: 100, colorDepth: "none" },
+    );
+    expect(unavailable).toContain("kiro busy task active");
+    expect(unavailable).not.toContain("75%");
+    expect(unavailable).not.toContain("─ signed out ─");
+  });
+
   it("summarizes the fleet in the dim header with local time", () => {
     const lines = render();
     expect(lines[0]).toBe(
