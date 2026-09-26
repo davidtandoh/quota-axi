@@ -7,6 +7,9 @@ const MAX_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
 /** After EOF, how long the vendor gets to exit before each signal escalation. */
 const TERMINATE_GRACE_MS = 2_000;
+/** The exact kiro-cli 2.24.1 sign-in failure. */
+const NOT_LOGGED_IN =
+  /You are not logged in, please log in with kiro-cli login/i;
 export const KIRO_ENGINES = ["v1", "v2", "v3"] as const;
 export type KiroEngine = (typeof KIRO_ENGINES)[number];
 
@@ -103,11 +106,12 @@ export function createKiroCliReader(dependencies: Dependencies) {
       /**
        * Clean termination of a failed exchange: normal EOF first, so the
        * vendor can drain its own authentication work, then SIGTERM and
-       * finally SIGKILL to the whole detached process group if it has not
-       * exited. A confirmed failed spawn has no process to signal.
+       * finally SIGKILL to the whole detached process group until its
+       * streams close: an exited launcher can leave the engine holding the
+       * pipes. A confirmed failed spawn has no process to signal.
        */
       function terminate() {
-        if (terminating || sawExit) return;
+        if (terminating || (sawExit && sawClose)) return;
         if (failedSpawn && !spawned && child.pid === undefined) return;
         terminating = true;
         try {
@@ -120,7 +124,7 @@ export function createKiroCliReader(dependencies: Dependencies) {
       }
       function escalate(signal: NodeJS.Signals, delayMs: number) {
         const handle = setTimeout(() => {
-          if (sawExit) return;
+          if (sawExit && sawClose) return;
           try {
             signalGroup(child, signal);
           } catch {
@@ -141,7 +145,7 @@ export function createKiroCliReader(dependencies: Dependencies) {
         if (pending === child) pending = undefined;
         if (responseReceived && exitCode === 0 && exitSignal === null)
           finish(undefined, response);
-        else if (!responseReceived && /not logged in/i.test(stderr))
+        else if (!responseReceived && NOT_LOGGED_IN.test(stderr))
           finish("kiro_not_logged_in");
         else finish("kiro_usage_failed");
       }

@@ -188,6 +188,16 @@ describe("Kiro fixed ACP exchange (mock child only)", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("does not treat an unrelated not-logged-in message as sign-out", async () => {
+    const h = harness();
+    const result = h.reader("/synthetic/kiro-cli");
+    const rejected = expect(result).rejects.toThrow("kiro_usage_failed");
+    h.process.stderr.write("error: upstream service not logged in\n");
+    h.process.stdout.emit("end");
+    h.close(1);
+    await rejected;
+  });
+
   it("does not treat sign-in text as sign-out after a valid response", async () => {
     const h = harness();
     const result = h.reader("/synthetic/kiro-cli");
@@ -237,6 +247,32 @@ describe("Kiro fixed ACP exchange (mock child only)", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(h.signalGroup).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("terminates the process group when the launcher exits but its streams stay open", async () => {
+    const h = harness();
+    h.process.pid = 4242;
+    const result = h.reader("/synthetic/kiro-cli");
+    const rejection = expect(result).rejects.toThrow("kiro_usage_timed_out");
+    h.initialize();
+    h.send({ jsonrpc: "2.0", id: 1, result: { success: true } });
+    h.process.emit("exit", 0, null);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await rejection;
+    await expect(h.reader("/synthetic/kiro-cli")).rejects.toThrow(
+      "kiro_usage_pending",
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(h.signalGroup).toHaveBeenLastCalledWith(h.process, "SIGTERM");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(h.signalGroup).toHaveBeenLastCalledWith(h.process, "SIGKILL");
+    h.process.emit("close", null, "SIGKILL");
+    expect(vi.getTimerCount()).toBe(0);
+    const retry = h.reader("/synthetic/kiro-cli");
+    expect(h.spawn).toHaveBeenCalledTimes(2);
+    const retryFailure = expect(retry).rejects.toThrow("kiro_usage_failed");
+    h.close(1);
+    await retryFailure;
   });
 
   it("requires clean exit and stream close after a valid response", async () => {

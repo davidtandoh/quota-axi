@@ -383,11 +383,13 @@ their streams, and matched no configured engine-exit or authentication-drain
 timeout marker. Preflight and postflight both found the task directory absent.
 The historical 2.22.0 exit-1 evidence remains valid for that version.
 
-The product reader now mirrors the accepted success lifecycle. It sends normal
-EOF after a valid usage response, continues draining, and resolves only after
-exit 0 and stream close. Nonzero exit and lifecycle timeout become unavailable
-or eligible stale evidence. The reader never signals the process. Default
-launch remains unbound.
+Historical (2.22.1): at this point the product reader mirrored the accepted
+success lifecycle. It sent normal EOF after a valid usage response, continued
+draining, and resolved only after exit 0 and stream close. Nonzero exit and
+lifecycle timeout became unavailable or eligible stale evidence. The reader
+never signalled the process, and default launch remained unbound. The shipped
+reader now terminates the process group after a failure or timeout, and launch
+is enabled by default behind the idle guard; see the README.
 
 The remaining native boundary is task coexistence. The supported ACP command
 exposes no task-home selector. `KIRO_HOME` forwarding to the KAS `homeDir` is

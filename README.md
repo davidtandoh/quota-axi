@@ -881,14 +881,14 @@ finally `SIGKILL` to the ACP process group, two seconds apart, if it is still
 running. Stderr is read only to recognize the sign-in failure and is never
 printed or cached.
 
-| Setting or condition                   | Behavior                                                                     |
-| -------------------------------------- | ---------------------------------------------------------------------------- |
-| `QUOTA_AXI_KIRO_NATIVE=0` (or `false`) | Never launch Kiro; report `kiro_native_disabled`                             |
-| `QUOTA_AXI_KIRO_ENGINE=v3` (default)   | ACP `--agent-engine`; an unknown value fails closed                          |
-| `--no-credential-refresh`              | Skip with `kiro_refresh_disabled`; Kiro may rotate its token during the read |
-| `--profile-only`                       | Unsupported for Kiro                                                         |
-| Kiro signed out                        | `auth_required` with `kiro_not_logged_in`                                    |
-| `kiro-cli` not on `PATH`               | `unavailable` with `kiro_cli_unavailable`                                    |
+| Setting or condition                                | Behavior                                                                     |
+| --------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `QUOTA_AXI_KIRO_NATIVE=0` (or `false`, `off`, `no`) | Never launch Kiro; report `kiro_native_disabled`                             |
+| `QUOTA_AXI_KIRO_ENGINE=v3` (default)                | ACP `--agent-engine`; an unknown value fails closed                          |
+| `--no-credential-refresh`                           | Skip with `kiro_refresh_disabled`; Kiro may rotate its token during the read |
+| `--profile-only`                                    | Unsupported for Kiro                                                         |
+| Kiro signed out                                     | `auth_required` with `kiro_not_logged_in`                                    |
+| `kiro-cli` not on `PATH`                            | `unavailable` with `kiro_cli_unavailable`                                    |
 
 The plan meter becomes one `credits` window: used credits divided by the
 allowance (for example 2,000 credits per cycle) give used percent, and
