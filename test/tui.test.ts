@@ -82,7 +82,7 @@ function displayColumns(text: string): number {
 }
 
 describe("renderQuotaTui structure", () => {
-  it("renders mocked Kiro meters with unknown relationships and unavailable native transport honestly", () => {
+  it("renders mocked Kiro meters with unknown relationships and a busy preflight honestly", () => {
     const kiro: ProviderQuota = {
       provider: "kiro",
       label: "Kiro CLI V3",
@@ -129,14 +129,14 @@ describe("renderQuotaTui structure", () => {
             state: {
               ...kiro.state,
               status: "unavailable",
-              error: "kiro_transport_unverified",
+              error: "kiro_busy_task_active",
             },
           },
         ],
       },
       { columns: 100, colorDepth: "none" },
     );
-    expect(unavailable).toContain("kiro transport unverified");
+    expect(unavailable).toContain("kiro busy task active");
     expect(unavailable).not.toContain("75%");
     expect(unavailable).not.toContain("─ signed out ─");
   });

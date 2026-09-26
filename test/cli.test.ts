@@ -1909,12 +1909,12 @@ describe("new provider public quota output", () => {
 });
 
 describe("default TOON decision blocks", () => {
-  it("accepts the Kiro selector and reports native transport as unavailable", async () => {
+  it("accepts the Kiro selector and reports a busy Kiro preflight as unavailable", async () => {
     useTempCache();
     PROVIDERS.kiro = providerWithQuota(unavailableKiroQuota());
     const output = await capture(["--provider", "kiro"]);
     expect(toonRows(output, "quota")).toEqual([]);
-    expect(output).toContain("kiro_transport_unverified");
+    expect(output).toContain("kiro_busy_task_active");
     expect(toonRows(output, "attention").some((row) => row[0] === "kiro")).toBe(
       true,
     );
@@ -3784,7 +3784,7 @@ function unavailableKiroQuota(): ProviderQuota {
       status: "unavailable",
       stale: false,
       sourcesTried: ["kiro-v3-acp"],
-      error: "kiro_transport_unverified",
+      error: "kiro_busy_task_active",
     },
   };
 }

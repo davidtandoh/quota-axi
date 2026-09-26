@@ -3,6 +3,12 @@ import { StringDecoder } from "node:string_decoder";
 
 const WAIT_MS = 15_000;
 const MAX_BYTES = 1024 * 1024;
+/** Stderr is kept only to classify a sign-in failure; it is never published. */
+const MAX_STDERR_BYTES = 16 * 1024;
+/** After EOF, how long the vendor gets to exit before each signal escalation. */
+const TERMINATE_GRACE_MS = 2_000;
+export const KIRO_ENGINES = ["v1", "v2", "v3"] as const;
+export type KiroEngine = (typeof KIRO_ENGINES)[number];
 
 type Failure =
   | "kiro_usage_pending"
@@ -11,7 +17,8 @@ type Failure =
   | "kiro_usage_malformed"
   | "kiro_usage_protocol_error"
   | "kiro_usage_request_unsupported"
-  | "kiro_usage_too_large";
+  | "kiro_usage_too_large"
+  | "kiro_not_logged_in";
 
 export class KiroCliError extends Error {
   constructor(readonly code: Failure) {
@@ -20,7 +27,6 @@ export class KiroCliError extends Error {
 }
 
 type Dependencies = {
-  // Mandatory injection: there is no accepted native launch binding yet.
   spawn: (
     command: string,
     args: string[],
@@ -28,25 +34,32 @@ type Dependencies = {
   ) => ChildProcess;
   cwd: string;
   env: NodeJS.ProcessEnv;
+  /** Signal the child's process group. Defaults to `process.kill(-pid)`. */
+  signalGroup?: (child: ChildProcess, signal: NodeJS.Signals) => void;
 };
 
-/** Fixed ACP exchange only. Native launch binding remains outstanding. */
+/**
+ * Fixed ACP exchange only: `initialize`, then `_kiro/account/getUsage`. No
+ * session, prompt, or credential request is ever sent, so no model credits are
+ * consumed. The caller owns the safety preflight (see `kiro-idle.ts`).
+ */
 export function createKiroCliReader(dependencies: Dependencies) {
   let pending: ChildProcess | undefined;
-  return (commandPath: string): Promise<unknown> => {
+  const signalGroup = dependencies.signalGroup ?? defaultSignalGroup;
+  return (commandPath: string, engine: KiroEngine = "v3"): Promise<unknown> => {
     if (pending) return Promise.reject(new KiroCliError("kiro_usage_pending"));
     return new Promise((resolve, reject) => {
       let child: ChildProcess;
       try {
         child = dependencies.spawn(
           commandPath,
-          ["acp", "--agent-engine", "v3", "--auth-method", "cli"],
+          ["acp", "--agent-engine", engine, "--auth-method", "cli"],
           {
             cwd: dependencies.cwd,
             env: dependencies.env,
             detached: true,
             shell: false,
-            stdio: ["pipe", "pipe", "ignore"],
+            stdio: ["pipe", "pipe", "pipe"],
           },
         );
       } catch {
@@ -66,6 +79,10 @@ export function createKiroCliReader(dependencies: Dependencies) {
       let expectedId = 0;
       let bytes = 0;
       let buffer = "";
+      let stderr = "";
+      let stderrBytes = 0;
+      let terminating = false;
+      const escalations: NodeJS.Timeout[] = [];
       const decoder = new StringDecoder("utf8");
       const timer = setTimeout(() => fail("kiro_usage_timed_out"), WAIT_MS);
 
@@ -81,6 +98,37 @@ export function createKiroCliReader(dependencies: Dependencies) {
       }
       function fail(error: Failure) {
         finish(error);
+        terminate();
+      }
+      /**
+       * Clean termination of a failed exchange: normal EOF first, so the
+       * vendor can drain its own authentication work, then SIGTERM and
+       * finally SIGKILL to the whole detached process group if it has not
+       * exited. A confirmed failed spawn has no process to signal.
+       */
+      function terminate() {
+        if (terminating || sawExit) return;
+        if (failedSpawn && !spawned && child.pid === undefined) return;
+        terminating = true;
+        try {
+          child.stdin?.end();
+        } catch {
+          // The escalation below still applies.
+        }
+        escalate("SIGTERM", TERMINATE_GRACE_MS);
+        escalate("SIGKILL", 2 * TERMINATE_GRACE_MS);
+      }
+      function escalate(signal: NodeJS.Signals, delayMs: number) {
+        const handle = setTimeout(() => {
+          if (sawExit) return;
+          try {
+            signalGroup(child, signal);
+          } catch {
+            // Already gone; exit and close events settle ownership.
+          }
+        }, delayMs);
+        handle.unref?.();
+        escalations.push(handle);
       }
       function maybeComplete() {
         if (failedSpawn && !spawned && child.pid === undefined && sawClose) {
@@ -89,10 +137,13 @@ export function createKiroCliReader(dependencies: Dependencies) {
           return;
         }
         if (!sawExit || !sawClose) return;
+        for (const handle of escalations) clearTimeout(handle);
         if (pending === child) pending = undefined;
         if (responseReceived && exitCode === 0 && exitSignal === null)
           finish(undefined, response);
-        else fail("kiro_usage_failed");
+        else if (!responseReceived && /not logged in/i.test(stderr))
+          finish("kiro_not_logged_in");
+        else finish("kiro_usage_failed");
       }
       function send(id: number, method: string, params: object) {
         try {
@@ -176,10 +227,19 @@ export function createKiroCliReader(dependencies: Dependencies) {
           fail("kiro_usage_failed");
         maybeComplete();
       });
-      child.stdin?.on("error", () => fail("kiro_usage_failed"));
+      child.stderr?.on("error", () => undefined);
+      child.stderr?.on("data", (chunk: Buffer) => {
+        if (stderrBytes >= MAX_STDERR_BYTES) return;
+        stderrBytes += chunk.length;
+        stderr += chunk.toString("utf8");
+      });
+      // A broken input pipe or early output EOF usually means the vendor is
+      // exiting on its own (for example, not signed in). Let exit and close
+      // classify it; the total wait still bounds the exchange.
+      child.stdin?.on("error", () => terminate());
       child.stdout?.on("error", () => fail("kiro_usage_failed"));
       child.stdout?.on("end", () => {
-        if (!responseReceived) fail("kiro_usage_failed");
+        if (!responseReceived) terminate();
       });
       child.stdout?.on("data", (chunk: Buffer) => {
         spawned = true;
@@ -198,4 +258,15 @@ export function createKiroCliReader(dependencies: Dependencies) {
       send(0, "initialize", { protocolVersion: 1, clientCapabilities: {} });
     });
   };
+}
+
+function defaultSignalGroup(child: ChildProcess, signal: NodeJS.Signals) {
+  if (child.pid === undefined) return;
+  try {
+    // Negative PID: the detached child leads its own process group, which
+    // also holds the V3 engine it starts.
+    process.kill(-child.pid, signal);
+  } catch {
+    child.kill(signal);
+  }
 }

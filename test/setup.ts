@@ -67,3 +67,8 @@ delete process.env.QUOTA_AXI_SNAPSHOT;
 // CLI login store is already unreachable because XDG_CONFIG_HOME is sandboxed
 // above. Tests that exercise Muse set their own credential environment.
 delete process.env.META_API_KEY;
+
+// No test may start the machine's real Kiro CLI: the native usage read spawns
+// `kiro-cli acp`, which rewrites the real ~/.kiro task metadata. Kiro tests
+// inject their own launcher and environment.
+process.env.QUOTA_AXI_KIRO_NATIVE = "0";

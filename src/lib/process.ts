@@ -196,10 +196,13 @@ export function terminateChild(child: ChildProcess): void {
 // Linux procps rejects the BSD `-x` selector alongside `-u` ("must set
 // personality to get -x option"), so only macOS/BSD gets it. Both list the
 // current user's processes including ones without a controlling terminal.
-export function currentUserProcessListArgs(effectiveUid: number): string[] {
+export function currentUserProcessListArgs(
+  effectiveUid: number,
+  columns: "pid=,command=" | "pid=,comm=" = "pid=,command=",
+): string[] {
   const selector =
     process.platform === "linux"
       ? ["-u", String(effectiveUid)]
       : ["-x", "-u", String(effectiveUid)];
-  return [...selector, "-o", "pid=,command="];
+  return [...selector, "-o", columns];
 }

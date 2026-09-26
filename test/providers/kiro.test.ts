@@ -13,6 +13,21 @@ const options: ProviderOptions = {
 };
 const generatedAt = "2026-09-16T12:00:00.000Z";
 
+/** An adapter whose preflight proves idle and whose environment is empty. */
+function adapterWith(
+  overrides: Parameters<typeof createKiroAdapter>[0] = {},
+): ReturnType<typeof createKiroAdapter> {
+  return createKiroAdapter({
+    findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
+    checkIdle: vi.fn().mockResolvedValue({ idle: true }),
+    readUsage: vi.fn().mockRejectedValue(new Error("unexpected read")),
+    readCachedProvider: vi.fn(),
+    environment: () => ({}),
+    now: () => Date.parse(generatedAt) + 60_000,
+    ...overrides,
+  });
+}
+
 // Synthetic values in the vendor-normalized ACP result shape. No live store.
 function usage() {
   return {
@@ -154,8 +169,7 @@ describe("Kiro V3 native usage normalization", () => {
 describe("Kiro provider acceptance boundary", () => {
   it("blocks the injected reader for read-only, auth and profile-only paths", async () => {
     const readUsage = vi.fn();
-    const adapter = createKiroAdapter({
-      findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
+    const adapter = adapterWith({
       readUsage,
     });
     expect(
@@ -168,30 +182,207 @@ describe("Kiro provider acceptance boundary", () => {
     expect(readUsage).not.toHaveBeenCalled();
   });
 
-  it("discovers the executable without launching it or claiming auth usability", async () => {
+  it("inspects auth without launching Kiro or claiming auth usability", async () => {
     const findCommandPath = vi.fn().mockResolvedValue("/synthetic/kiro-cli");
-    const adapter = createKiroAdapter({ findCommandPath });
-    expect(await adapter.fetchQuota(options)).toMatchObject({
-      source: "unavailable",
-      windows: [],
-      state: { status: "unavailable", error: "kiro_transport_unverified" },
-    });
+    const readUsage = vi.fn();
+    const checkIdle = vi.fn();
+    const adapter = adapterWith({ findCommandPath, readUsage, checkIdle });
     expect(await adapter.inspectAuth(options)).toEqual({
       provider: "kiro",
       sources: [
         {
           source: "kiro-v3-acp",
           status: "skipped",
-          error: "kiro_transport_unverified",
+          error: "kiro_auth_vendor_owned",
         },
       ],
     });
     expect(findCommandPath).toHaveBeenCalledWith("kiro-cli");
+    expect(readUsage).not.toHaveBeenCalled();
+    expect(checkIdle).not.toHaveBeenCalled();
+  });
+
+  it.each(["0", "false", "OFF", "no"])(
+    "honors the QUOTA_AXI_KIRO_NATIVE=%s opt-out before any preflight",
+    async (value) => {
+      const readUsage = vi.fn();
+      const checkIdle = vi.fn();
+      const adapter = adapterWith({
+        readUsage,
+        checkIdle,
+        environment: () => ({ QUOTA_AXI_KIRO_NATIVE: value }),
+      });
+      expect(await adapter.fetchQuota(options)).toMatchObject({
+        state: { status: "unavailable", error: "kiro_native_disabled" },
+      });
+      expect((await adapter.inspectAuth(options)).sources[0].error).toBe(
+        "kiro_native_disabled",
+      );
+      expect(checkIdle).not.toHaveBeenCalled();
+      expect(readUsage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reads with the V3 engine by default and a configured engine otherwise", async () => {
+    const readUsage = vi.fn().mockResolvedValue(usage());
+    await adapterWith({ readUsage }).fetchQuota(options);
+    await adapterWith({
+      readUsage,
+      environment: () => ({ QUOTA_AXI_KIRO_ENGINE: "v2" }),
+    }).fetchQuota(options);
+    expect(readUsage.mock.calls).toEqual([
+      ["/synthetic/kiro-cli", "v3"],
+      ["/synthetic/kiro-cli", "v2"],
+    ]);
+  });
+
+  it("fails closed on an unknown engine without a preflight or launch", async () => {
+    const readUsage = vi.fn();
+    const checkIdle = vi.fn();
+    const adapter = adapterWith({
+      readUsage,
+      checkIdle,
+      environment: () => ({ QUOTA_AXI_KIRO_ENGINE: "v3 --trust-all-tools" }),
+    });
+    expect(await adapter.fetchQuota(options)).toMatchObject({
+      state: { status: "unavailable", error: "kiro_engine_invalid" },
+    });
+    expect(checkIdle).not.toHaveBeenCalled();
+    expect(readUsage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "kiro_busy_process_active",
+    "kiro_busy_task_active",
+    "kiro_busy_unverified",
+  ] as const)(
+    "skips the launch and serves stale cache when the preflight reports %s",
+    async (reason) => {
+      const readUsage = vi.fn();
+      const cached = cachedQuota();
+      const busy = adapterWith({
+        readUsage,
+        checkIdle: vi.fn().mockResolvedValue({ idle: false, reason }),
+        readCachedProvider: vi.fn().mockReturnValue(cached),
+      });
+      expect(await busy.fetchQuota(options)).toMatchObject({
+        source: "cache",
+        windows: cached.windows,
+        state: { status: "stale", error: reason },
+        attempts: [{ source: "kiro-v3-acp", status: "skipped", error: reason }],
+      });
+      const uncached = adapterWith({
+        readUsage,
+        checkIdle: vi.fn().mockResolvedValue({ idle: false, reason }),
+      });
+      const quota = await uncached.fetchQuota(options);
+      expect(quota).toMatchObject({
+        windows: [],
+        state: { status: "unavailable", error: reason },
+      });
+      expect(readUsage).not.toHaveBeenCalled();
+      expect(
+        uncached.isUncertainSkip?.({
+          source: "kiro-v3-acp",
+          status: "skipped",
+          error: reason,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it("withholds a resetless cached credit window instead of serving it stale", async () => {
+    const cached = cachedQuota();
+    delete cached.windows[0].resetsAt;
+    const adapter = adapterWith({
+      checkIdle: vi
+        .fn()
+        .mockResolvedValue({ idle: false, reason: "kiro_busy_task_active" }),
+      readCachedProvider: vi.fn().mockReturnValue(cached),
+    });
+    expect(await adapter.fetchQuota(options)).toMatchObject({
+      windows: [],
+      state: { status: "unavailable", error: "kiro_busy_task_active" },
+    });
+  });
+
+  it("treats a throwing preflight as unverified, never as idle", async () => {
+    const readUsage = vi.fn();
+    const adapter = adapterWith({
+      readUsage,
+      checkIdle: vi.fn().mockRejectedValue(new Error("private detail")),
+    });
+    expect(await adapter.fetchQuota(options)).toMatchObject({
+      state: { status: "unavailable", error: "kiro_busy_unverified" },
+    });
+    expect(readUsage).not.toHaveBeenCalled();
+  });
+
+  it("reports a Kiro sign-out as auth_required without reading credentials", async () => {
+    const adapter = adapterWith({
+      readUsage: vi
+        .fn()
+        .mockRejectedValue(new KiroCliError("kiro_not_logged_in")),
+    });
+    expect(await adapter.fetchQuota(options)).toMatchObject({
+      windows: [],
+      state: { status: "auth_required", error: "kiro_not_logged_in" },
+      attempts: [
+        {
+          source: "kiro-v3-acp",
+          status: "failed",
+          error: "kiro_not_logged_in",
+        },
+      ],
+    });
+  });
+
+  it("reports the 2,000-credit cycle with absolute remaining credits and date-only reset", async () => {
+    const adapter = adapterWith({
+      readUsage: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          planName: "KIRO PRO+",
+          billingCycleReset: "2026-10-01",
+          usageBreakdowns: [
+            {
+              resourceType: "CREDIT",
+              displayName: "Credits",
+              used: 61.22,
+              limit: 2000,
+              hasLimit: true,
+            },
+          ],
+          bonusCredits: [],
+          addOnCredits: [],
+        },
+      }),
+      now: () => Date.parse(generatedAt),
+    });
+    const quota = withQuotaSemantics(
+      await adapter.fetchQuota(options),
+      generatedAt,
+    );
+    expect(quota).toMatchObject({
+      plan: "KIRO PRO+",
+      source: "cli-rpc",
+      credits: { remaining: 1938.78, unit: "credits" },
+      state: { status: "fresh" },
+    });
+    expect(quota.windows).toHaveLength(1);
+    expect(quota.windows[0]).toMatchObject({
+      id: "usage:1",
+      kind: "credits",
+      resetText: "2026-10-01",
+    });
+    expect(quota.windows[0].percentUsed).toBeCloseTo(3.061);
+    expect(quota.windows[0].resetsAt).toBeUndefined();
+    expect(quota.windows[0].pace).toMatchObject({ status: "unknown" });
   });
 
   it("reports absent or failed discovery without reading credentials", async () => {
     const readUsage = vi.fn();
-    const adapter = createKiroAdapter({
+    const adapter = adapterWith({
       findCommandPath: vi.fn().mockResolvedValue(undefined),
       readUsage,
     });
@@ -202,7 +393,14 @@ describe("Kiro provider acceptance boundary", () => {
       "missing",
     );
     expect(readUsage).not.toHaveBeenCalled();
-    const failed = createKiroAdapter({
+    expect(
+      adapter.isUncertainSkip?.({
+        source: "kiro-v3-acp",
+        status: "skipped",
+        error: "kiro_cli_unavailable",
+      }),
+    ).toBe(false);
+    const failed = adapterWith({
       findCommandPath: vi
         .fn()
         .mockRejectedValue(new Error("secret-shaped text")),
@@ -217,8 +415,7 @@ describe("Kiro provider acceptance boundary", () => {
   });
 
   it("normalizes mocked usage without inventing effective bounds or pace", async () => {
-    const adapter = createKiroAdapter({
-      findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
+    const adapter = adapterWith({
       readUsage: vi.fn().mockResolvedValue(usage()),
       now: () => Date.parse(generatedAt),
     });
@@ -250,8 +447,7 @@ describe("Kiro provider acceptance boundary", () => {
   ])(
     "keeps unsupported or malformed evidence unavailable",
     async (raw, error) => {
-      const adapter = createKiroAdapter({
-        findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
+      const adapter = adapterWith({
         readUsage: vi.fn().mockResolvedValue(raw),
         readCachedProvider: vi.fn(),
       });
@@ -263,8 +459,7 @@ describe("Kiro provider acceptance boundary", () => {
   );
 
   it("redacts transport errors and does not convert them into sign-out", async () => {
-    const adapter = createKiroAdapter({
-      findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
+    const adapter = adapterWith({
       readUsage: vi.fn().mockRejectedValue(new Error("private token: example")),
       readCachedProvider: vi.fn(),
     });
@@ -288,11 +483,9 @@ describe("Kiro provider acceptance boundary", () => {
     "reports cached Kiro data as stale after %s evidence",
     async (raw, error, attemptStatus) => {
       const cached = cachedQuota();
-      const adapter = createKiroAdapter({
-        findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
+      const adapter = adapterWith({
         readUsage: vi.fn().mockResolvedValue(raw),
         readCachedProvider: vi.fn().mockReturnValue(cached),
-        now: () => Date.parse(generatedAt) + 60_000,
       });
 
       const quota = await adapter.fetchQuota(options);
@@ -322,13 +515,11 @@ describe("Kiro provider acceptance boundary", () => {
 
   it("reports cached Kiro data as stale after a bounded reader failure", async () => {
     const cached = cachedQuota();
-    const adapter = createKiroAdapter({
-      findCommandPath: vi.fn().mockResolvedValue("/synthetic/kiro-cli"),
+    const adapter = adapterWith({
       readUsage: vi
         .fn()
         .mockRejectedValue(new KiroCliError("kiro_usage_timed_out")),
       readCachedProvider: vi.fn().mockReturnValue(cached),
-      now: () => Date.parse(generatedAt) + 60_000,
     });
 
     expect(await adapter.fetchQuota(options)).toMatchObject({
