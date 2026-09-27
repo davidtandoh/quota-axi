@@ -16,8 +16,7 @@ jobs:
   discover:
     if: >-
       github.repository == 'davidtandoh/quota-axi' &&
-      github.event.repository.default_branch == 'main' &&
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -58,7 +57,7 @@ jobs:
     if: >-
       needs.discover.outputs.changed == 'true' &&
       github.repository == 'davidtandoh/quota-axi' &&
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

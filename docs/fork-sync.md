@@ -48,7 +48,7 @@ changes; the registry does not freeze their original contents.
 | Component | Responsibility                                                                                        | Token permissions                         |
 | --------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------- |
 | Discovery | Fetch public upstream objects, check the registry, construct a merge object, report immutable SHAs    | `contents: read`                          |
-| Normal CI | Reconstruct the same SHA, then build, test, lint, check formatting and generated skill                | `contents: read`                          |
+| Normal CI | Reconstruct the same SHA, then build, test, lint and check the generated skill                        | `contents: read`                          |
 | Publisher | Reconstruct the validated SHA from trusted main, recheck remote refs, push the sync branch, open a PR | `contents: write`, `pull-requests: write` |
 
 All jobs use fresh GitHub-hosted runners. The publisher installs no project

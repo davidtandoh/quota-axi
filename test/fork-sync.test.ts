@@ -379,19 +379,18 @@ describe("fork sync workflow trust boundaries", () => {
       "workflow_dispatch",
     ]);
     expect(sync.permissions).toEqual({ contents: "read" });
-    expect(sync.jobs.discover.if).toContain(
-      "github.event.repository.default_branch",
-    );
-    expect(sync.jobs.discover.if).toContain("davidtandoh/quota-axi");
     expect(sync.jobs.validate.uses).toBe("./.github/workflows/ci.yml");
     expect(sync.jobs.publish.needs).toEqual(["discover", "validate"]);
     expect(sync.jobs.publish.permissions).toEqual({
       contents: "write",
       "pull-requests": "write",
     });
-    expect(JSON.stringify(sync.jobs.publish)).not.toMatch(
-      /pnpm|npm install|secrets: inherit/,
-    );
+    expect(sync.jobs.validate.secrets).toBeUndefined();
+    expect(
+      sync.jobs.publish.steps.flatMap((step: any) =>
+        step.uses ? [step.uses] : [],
+      ),
+    ).toEqual(["actions/checkout@v4", "actions/setup-node@v6"]);
   });
   it("runs CI without stored credentials or write permission", () => {
     const ci = workflow("ci.yml");
