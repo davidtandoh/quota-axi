@@ -1,0 +1,83 @@
+name: Propose upstream sync
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-sync-main
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    if: >-
+      github.repository == 'davidtandoh/quota-axi' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      base: ${{ steps.candidate.outputs.base }}
+      upstream: ${{ steps.candidate.outputs.upstream }}
+      head: ${{ steps.candidate.outputs.head }}
+      changed: ${{ steps.candidate.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Discover and construct pinned candidate without remote writes
+        id: candidate
+        env:
+          BASE: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          result=$(node scripts/fork-sync.mjs discover --base "$BASE")
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "$result" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$result" >> "$GITHUB_STEP_SUMMARY"
+
+  validate:
+    needs: discover
+    if: needs.discover.outputs.changed == 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      sync-base: ${{ needs.discover.outputs.base }}
+      sync-upstream: ${{ needs.discover.outputs.upstream }}
+      sync-head: ${{ needs.discover.outputs.head }}
+
+  publish:
+    needs: [discover, validate]
+    if: >-
+      needs.discover.outputs.changed == 'true' &&
+      github.repository == 'davidtandoh/quota-axi' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Reconstruct validated commit and publish only the sync branch
+        env:
+          BASE: ${{ needs.discover.outputs.base }}
+          UPSTREAM: ${{ needs.discover.outputs.upstream }}
+          HEAD_SHA: ${{ needs.discover.outputs.head }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/fork-sync.mjs publish --base "$BASE" --upstream "$UPSTREAM" --head "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
