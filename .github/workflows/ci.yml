@@ -1,6 +1,17 @@
 name: ci
 
 on:
+  workflow_call:
+    inputs:
+      sync-base:
+        required: true
+        type: string
+      sync-upstream:
+        required: true
+        type: string
+      sync-head:
+        required: true
+        type: string
   push:
     branches: [main]
   pull_request:
@@ -13,11 +24,31 @@ on:
       - CHANGELOG.md
       - package.json
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sync-base || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reconstruct the candidate from the trusted base
+        if: inputs.sync-head != ''
+        env:
+          BASE: ${{ inputs.sync-base }}
+          UPSTREAM: ${{ inputs.sync-upstream }}
+          HEAD_SHA: ${{ inputs.sync-head }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --no-write-fetch-head https://github.com/kunchenguid/quota-axi.git refs/heads/main
+          node scripts/fork-sync.mjs prepare --base "$BASE" --upstream "$UPSTREAM" --head "$HEAD_SHA"
+          git -c core.hooksPath=/dev/null checkout --detach "$HEAD_SHA"
 
       - uses: pnpm/action-setup@v4
 
@@ -30,4 +61,5 @@ jobs:
       - run: pnpm run build
       - run: pnpm test
       - run: pnpm run lint
+      - run: pnpm run format:check
       - run: pnpm run build:skill -- --check

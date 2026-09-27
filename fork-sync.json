@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "upstream": {
+    "repository": "kunchenguid/quota-axi",
+    "branch": "main",
+    "commit": "4368dbf4d621b0deb9c1432c7daa56ead219d7c1"
+  },
+  "patches": [
+    {
+      "id": "kiro-v3",
+      "anchor": "fb23e712595e3cff9d12937fc41eab4482dad6ea",
+      "paths": [
+        ".gitignore",
+        "README.md",
+        "docs/kiro-v3-transport-assessment.md",
+        "skills/quota-axi/SKILL.md",
+        "src/cache.ts",
+        "src/interpretation.ts",
+        "src/lib/fs.ts",
+        "src/lib/process.ts",
+        "src/providers/index.ts",
+        "src/providers/kiro-cli.ts",
+        "src/providers/kiro-idle.ts",
+        "src/providers/kiro.ts",
+        "src/skill.ts",
+        "src/tui.ts",
+        "src/types.ts",
+        "test/cache.test.ts",
+        "test/cli.test.ts",
+        "test/providers/kiro-cli.test.ts",
+        "test/providers/kiro-idle.test.ts",
+        "test/providers/kiro.test.ts",
+        "test/reuse-context.test.ts",
+        "test/setup.ts",
+        "test/tui.test.ts"
+      ]
+    },
+    {
+      "id": "fork-sync",
+      "anchor": "9d10f077e69ec18c2bddd55821e6e81621831af0",
+      "paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/fork-sync.yml",
+        "scripts/fork-sync.mjs",
+        "test/fork-sync.test.ts",
+        "docs/fork-sync.md"
+      ]
+    }
+  ]
+}
