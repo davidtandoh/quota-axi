@@ -864,9 +864,17 @@ therefore runs a fail-closed idle preflight before every launch:
 | Process list or task metadata cannot be read or parsed                                                                         | Skip with `kiro_busy_unverified`     |
 | No Kiro process and no active task                                                                                             | Launch the read                      |
 
-A skipped read reports `unavailable` with that reason. Kiro windows carry only
-a reset date, not a timestamp, so the shared stale-cache bound does not serve
-an older Kiro snapshot in their place. A task that
+Each successful measured reading stores its normalized quota and observation
+timestamp in the shared private cache. When a Kiro process is active, the
+report includes that last reading as `stale`, with its age, even though Kiro
+windows have no precise reset timestamp. The fleet summary counts the reading
+in its stale total, and the card shows the last observed credits and windows.
+These are historical values; effective availability remains unknown. JSON
+keeps `state.refreshedAt` and `state.ageSeconds`, and TOON includes the age.
+Fallback does not update the cached timestamp. Missing or malformed cache,
+or an invalid or future observation timestamp, leaves Kiro `unavailable`.
+Other skipped or failed reads retain the shared stale-cache bounds; resetless
+Kiro credit windows are not served for those failures. A task that
 starts in the few seconds between the preflight and Kiro's own startup is not
 covered.
 
@@ -1135,6 +1143,9 @@ Providers with no established non-interactive rotation command stay read-only on
 - It never routes, ranks a winner, or orders providers preferentially. Derived comparative signals, including `effectiveAvailability[].selection`, are published as data for the consumer to act on.
 
 ### Cache
+
+The historical fallback for a confirmed active Kiro process is an exception
+to the stale fallback bound below. See [Kiro provider notes](#provider-notes).
 
 | Item                                   | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

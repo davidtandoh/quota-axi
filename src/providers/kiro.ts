@@ -208,7 +208,16 @@ function unavailableWithCache(
   const attempt = { source: SOURCE, status, error } as const;
   const cached = dependencies.readCachedProvider("kiro");
   const stale = cached
-    ? staleFromCache(cached, error, [SOURCE], [attempt], dependencies.now())
+    ? staleFromCache(
+        cached,
+        error,
+        [SOURCE],
+        [attempt],
+        dependencies.now(),
+        error === "kiro_busy_process_active"
+          ? "last_observation"
+          : "current_windows",
+      )
     : undefined;
   return stale ?? unavailable(error, status, options.status);
 }

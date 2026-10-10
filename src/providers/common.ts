@@ -191,7 +191,8 @@ export function staleUnlessSignOut(
  * Serve a cached snapshot as a stale reading of the current failure, keeping
  * only the windows {@link servableStaleWindows} still allows. Returns
  * `undefined` when none survive, so the caller reports the failed read exactly
- * as it would with no cache at all.
+ * as it would with no cache at all. `last_observation` retains historical
+ * windows with a valid age when a provider explicitly permits that fallback.
  */
 export function staleFromCache(
   cached: ProviderQuota,
@@ -199,13 +200,26 @@ export function staleFromCache(
   sourcesTried: string[],
   attempts: SourceAttempt[],
   now: number = Date.now(),
+  policy: "current_windows" | "last_observation" = "current_windows",
 ): ProviderQuota | undefined {
-  const windows = servableStaleWindows(cached, now);
+  // Historical observations need a trustworthy age, but make no claim that
+  // their windows still describe the current cycle. Kiro uses this only when
+  // a confirmed active process prevents a new observation.
+  const ageSeconds = (now - Date.parse(cached.state.refreshedAt ?? "")) / 1_000;
+  const windows =
+    policy === "last_observation"
+      ? Number.isFinite(ageSeconds) && ageSeconds >= 0
+        ? cached.windows
+        : []
+      : servableStaleWindows(cached, now);
   if (windows.length === 0) return undefined;
   const state: ProviderQuota["state"] = {
     ...cached.state,
     status: "stale",
     stale: true,
+    ...(policy === "last_observation"
+      ? { ageSeconds: Math.floor(ageSeconds) }
+      : {}),
     error,
     sourcesTried: [...new Set([...sourcesTried, "cache"])],
   };
