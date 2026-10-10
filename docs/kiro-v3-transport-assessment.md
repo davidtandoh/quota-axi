@@ -14,8 +14,11 @@ work on 2.24.1.
 idle preflight ──idle──> kiro-cli acp --agent-engine v3 --auth-method cli
   │                         initialize + _kiro/account/getUsage only
   │                         -> credits window, credits.remaining
-  └─busy or unsure──> no launch; unavailable with kiro_busy_* reason
+  └─busy or unsure──> no launch; report follows README fallback policy
 ```
+
+See [Kiro provider notes](../README.md#provider-notes) for the current
+busy-process cache fallback and unavailable outcomes.
 
 Takeaway: a quota read cannot rewrite a live Kiro task's status, because the
 read never starts while any Kiro process runs or any task is active.
@@ -109,9 +112,8 @@ Residual risks:
    `kiro-cli-chat` process, which the preflight detects.
 2. A process-group signal after a timeout can interrupt a vendor token
    rotation in flight. EOF and a two-second grace come first.
-3. Kiro reports the reset as a UTC calendar date, so windows have no
-   `resetsAt`. The shared stale-cache bound therefore never serves an older
-   Kiro snapshot; a skipped read reports `unavailable`.
+3. Cached-reading limits are defined in
+   [Kiro provider notes](../README.md#provider-notes).
 
 ### Live acceptance with the built CLI, 2026-09-26
 
