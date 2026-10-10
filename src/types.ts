@@ -319,6 +319,8 @@ export type ProviderQuota = {
     status: ProviderStatus;
     stale: boolean;
     refreshedAt?: string;
+    /** Age of a stale observation at the time of this report, in seconds. */
+    ageSeconds?: number;
     error?: string;
     retryAfter?: string;
     /**

@@ -346,6 +346,7 @@ function primaryProviderRow(provider: ProviderQuota): AttentionRow | undefined {
   const kind = state.stale ? "stale" : state.status;
   const staleDetail = [
     `last refreshed ${state.refreshedAt ?? UNKNOWN}`,
+    state.ageSeconds !== undefined ? `age ${state.ageSeconds}s` : undefined,
     state.error
       ? `${isUsageFetchFailure(provider) ? "fetch failed " : ""}${state.error}`
       : undefined,
@@ -636,10 +637,11 @@ export function quotaJsonReport(
         : {}),
       state: {
         ...provider.state,
-        // A reused reading's age is load-bearing, so its fetch time stays.
-        refreshedAt: provider.state.reused
-          ? provider.state.refreshedAt
-          : undefined,
+        // Reused and historical readings keep their observation time.
+        refreshedAt:
+          provider.state.reused || provider.state.ageSeconds !== undefined
+            ? provider.state.refreshedAt
+            : undefined,
         sourcesTried: undefined,
       },
     })),
