@@ -121,6 +121,42 @@ describe("Kiro last observation through the quota command", () => {
     );
   });
 
+  it("retires a signed-out snapshot before a later active-process fallback", async () => {
+    expect((await report()).providers[0].state.status).toBe("fresh");
+    expect(readCachedProvider("kiro")).toBeDefined();
+
+    readUsage.mockRejectedValue(new KiroCliError("kiro_not_logged_in"));
+    expect((await report()).providers[0]).toMatchObject({
+      windows: [],
+      state: {
+        status: "auth_required",
+        stale: false,
+        error: "kiro_not_logged_in",
+      },
+    });
+    expect(readCachedProvider("kiro")).toBeUndefined();
+
+    readUsage.mockClear();
+    checkIdle.mockResolvedValue({
+      idle: false,
+      reason: "kiro_busy_process_active",
+    });
+    const busy = await report();
+    expect(busy.providers[0]).toMatchObject({
+      windows: [],
+      state: {
+        status: "unavailable",
+        stale: false,
+        error: "kiro_busy_process_active",
+      },
+    });
+    expect(busy.providers[0].credits).toBeUndefined();
+    expect(
+      renderQuotaTui(busy, { columns: 120, colorDepth: "none" }),
+    ).toContain("excluded from fleet totals");
+    expect(readUsage).not.toHaveBeenCalled();
+  });
+
   it.each(["missing", "malformed", "invalid timestamp", "future timestamp"])(
     "reports unavailable for %s cache while active",
     async (kind) => {

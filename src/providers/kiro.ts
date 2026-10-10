@@ -1,11 +1,15 @@
 import { spawn } from "node:child_process";
 import * as processUtils from "../lib/process.js";
-import { readCachedProvider as readCachedProviderFromDisk } from "../cache.js";
+import {
+  readCachedProvider as readCachedProviderFromDisk,
+  retireCachedSlot,
+} from "../cache.js";
 import { kiroAcpDirs } from "../lib/fs.js";
 import type { ProviderAdapter, ProviderQuota, QuotaWindow } from "../types.js";
 import {
   failedProvider,
   staleFromCache,
+  staleUnlessSignOut,
   successProvider,
   withRemaining,
 } from "./common.js";
@@ -26,6 +30,7 @@ type KiroDependencies = {
   checkIdle: () => Promise<KiroIdleResult>;
   readUsage: (commandPath: string, engine: KiroEngine) => Promise<unknown>;
   readCachedProvider: typeof readCachedProviderFromDisk;
+  retireCachedSlot: typeof retireCachedSlot;
   environment: () => NodeJS.ProcessEnv;
   now: () => number;
 };
@@ -65,6 +70,7 @@ export function createKiroAdapter(
     checkIdle: () => checkKiroIdle(),
     readUsage: readUsageNatively,
     readCachedProvider: readCachedProviderFromDisk,
+    retireCachedSlot,
     environment: () => process.env,
     now: Date.now,
     ...overrides,
@@ -207,18 +213,29 @@ function unavailableWithCache(
 ): ProviderQuota {
   const attempt = { source: SOURCE, status, error } as const;
   const cached = dependencies.readCachedProvider("kiro");
-  const stale = cached
-    ? staleFromCache(
-        cached,
-        error,
-        [SOURCE],
-        [attempt],
-        dependencies.now(),
-        error === "kiro_busy_process_active"
-          ? "last_observation"
-          : "current_windows",
-      )
-    : undefined;
+  const stale =
+    error === "kiro_busy_process_active"
+      ? cached
+        ? staleFromCache(
+            cached,
+            error,
+            [SOURCE],
+            [attempt],
+            dependencies.now(),
+            "last_observation",
+          )
+        : undefined
+      : staleUnlessSignOut(
+          cached,
+          error,
+          [SOURCE],
+          [attempt],
+          {
+            definitive: options.status === "auth_required",
+            retire: () => dependencies.retireCachedSlot("kiro"),
+          },
+          dependencies.now(),
+        );
   return stale ?? unavailable(error, status, options.status);
 }
 

@@ -22,6 +22,7 @@ function adapterWith(
     checkIdle: vi.fn().mockResolvedValue({ idle: true }),
     readUsage: vi.fn().mockRejectedValue(new Error("unexpected read")),
     readCachedProvider: vi.fn(),
+    retireCachedSlot: vi.fn(),
     environment: () => ({}),
     now: () => Date.parse(generatedAt) + 60_000,
     ...overrides,
