@@ -122,6 +122,25 @@ describe("fork sync candidate", () => {
     const changed = f.commit("unowned.txt", "unregistered\n");
     expect(f.run("--base", changed).stderr).toContain("unregistered fork path");
   });
+  it("accepts a rejected fork change once a patch record registers it", () => {
+    const f = fixture();
+    const changed = f.commit("stale.txt", "reviewed fork change\n");
+    expect(f.run("--base", changed).stderr).toContain(
+      "unregistered fork path: stale.txt",
+    );
+    f.manifest.patches.push({
+      id: "stale",
+      anchor: changed,
+      paths: ["stale.txt"],
+    });
+    const registered = f.commit("fork-sync.json", JSON.stringify(f.manifest));
+    f.git("checkout", "-q", "--detach", registered);
+    const result = f.run("--base", registered);
+    expect(result.status, result.stderr).toBe(0);
+    const { head } = JSON.parse(result.stdout);
+    expect(f.git("show", `${head}:stale.txt`)).toBe("reviewed fork change");
+    expect(f.git("show", `${head}:upstream.txt`)).toBe("new upstream feature");
+  });
   it("refuses a missing fork patch anchor", () => {
     const f = fixture();
     f.manifest.patches[0].anchor = f.upstream;
@@ -366,6 +385,36 @@ describe("fork sync publication", () => {
     const result = f.publish();
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).not.toContain("synthetic-token");
+  });
+});
+
+describe("fork sync registry", () => {
+  // Discovery rejects any fork delta without an owner. Check the repository's
+  // own registry here so a change that forgets it fails review, not the
+  // weekly sync. Needs the pinned commit, which CI fetches with full history.
+  it("owns every tracked path that differs from the upstream pin", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(root, "fork-sync.json"), "utf8"),
+    );
+    const owned = new Set<string>([
+      "fork-sync.json",
+      ...manifest.patches.flatMap((patch: any) => patch.paths),
+    ]);
+    const delta = execFileSync(
+      "git",
+      [
+        "diff",
+        "--no-renames",
+        "--name-only",
+        "-z",
+        manifest.upstream.commit,
+        "--",
+      ],
+      { cwd: root, encoding: "utf8" },
+    )
+      .split("\0")
+      .filter(Boolean);
+    expect(delta.filter((path) => !owned.has(path))).toEqual([]);
   });
 });
 
