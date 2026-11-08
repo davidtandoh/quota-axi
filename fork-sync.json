@@ -45,6 +45,15 @@
         "test/fork-sync.test.ts",
         "docs/fork-sync.md"
       ]
+    },
+    {
+      "id": "kiro-stale-cache",
+      "anchor": "fdf66474d50d4f1e723dc96478ca247995a924f7",
+      "paths": [
+        "src/providers/common.ts",
+        "src/render.ts",
+        "test/kiro-stale-cache.test.ts"
+      ]
     }
   ]
 }
