@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -480,17 +481,17 @@ describe("generated-file guard on upstream syncs", () => {
     f.git("update-ref", "refs/remotes/upstream/main", release);
     f.git("checkout", "-q", "--detach", base);
     f.git("merge", "-q", "--no-edit", release);
-    const check = (head: string) =>
+    const check = (head: string, baseSha = base) =>
       spawnSync(
         "bash",
         ["--noprofile", "--norc", "-eo", "pipefail", "-c", step],
         {
           cwd: f.dir,
-          env: { ...f.env, BASE_SHA: base, HEAD_SHA: head },
+          env: { ...f.env, BASE_SHA: baseSha, HEAD_SHA: head },
           encoding: "utf8",
         },
       );
-    return { ...f, base, release, pin, check };
+    return { ...f, base, pinned, release, pin, check };
   }
 
   it("accepts generated files that exactly match the pinned trusted upstream commit", () => {
@@ -509,6 +510,63 @@ describe("generated-file guard on upstream syncs", () => {
     const f = guardFixture();
     f.git("update-ref", "refs/remotes/upstream/main", f.upstream);
     const result = f.check(f.pin(f.release));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it("rejects rolling generated files back to an older pinned upstream release", () => {
+    const f = guardFixture();
+    const synced = f.pin(f.release);
+    f.commit("CHANGELOG.md", "## 0.1.0\n");
+    const result = f.check(f.pin(f.pinned), synced);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it("rejects deleting a generated file even when the pinned upstream lacks it", () => {
+    const f = guardFixture();
+    f.git("checkout", "-q", "--detach", f.release);
+    f.git("rm", "-q", "--", "CHANGELOG.md");
+    f.git("commit", "-qm", "test: Delete changelog upstream");
+    const deleted = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", deleted);
+    f.git("checkout", "-q", "--detach", f.base);
+    f.git("merge", "-q", "--no-edit", deleted);
+    const result = f.check(f.pin(deleted));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it.each([
+    ["repository", { repository: "someone/quota-axi" }],
+    ["branch", { branch: "release" }],
+  ])(
+    "rejects a pin whose manifest names a different upstream %s",
+    (_, field) => {
+      const f = guardFixture();
+      const head = f.commit(
+        "fork-sync.json",
+        JSON.stringify({
+          ...f.manifest,
+          upstream: { ...f.manifest.upstream, ...field, commit: f.release },
+        }),
+      );
+      const result = f.check(head);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "modifies release-please-generated files",
+      );
+    },
+  );
+  it("rejects a generated file replaced by a symlink even when upstream has it", () => {
+    const f = guardFixture();
+    f.git("checkout", "-q", "--detach", f.release);
+    f.git("rm", "-q", "--", "CHANGELOG.md");
+    symlinkSync("shared.txt", join(f.dir, "CHANGELOG.md"));
+    f.git("add", "--", "CHANGELOG.md");
+    f.git("commit", "-qm", "test: Link changelog upstream");
+    const linked = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", linked);
+    f.git("checkout", "-q", "--detach", f.base);
+    f.git("merge", "-q", "--no-edit", linked);
+    const result = f.check(f.pin(linked));
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("modifies release-please-generated files");
   });
