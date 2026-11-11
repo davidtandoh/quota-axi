@@ -443,3 +443,79 @@ describe("fork sync workflow trust boundaries", () => {
     );
   });
 });
+
+describe("generated-file guard on upstream syncs", () => {
+  // Runs the workflow's own check step the way GitHub-hosted runners do, so the
+  // test exercises the shipped shell rather than a copy of its rule.
+  const step = (
+    load(
+      readFileSync(
+        join(root, ".github/workflows/guard-generated-files.yml"),
+        "utf8",
+      ),
+    ) as any
+  ).jobs.check.steps.find(
+    (s: any) =>
+      s.name === "Check PR does not modify release-please-generated files",
+  ).run as string;
+  function guardFixture() {
+    const f = fixture();
+    // Upstream release-please output at the pin, then a newer upstream release.
+    f.git("checkout", "-q", "--detach", f.pin);
+    const pinned = f.commit("CHANGELOG.md", "## 0.1.0\n");
+    f.git("checkout", "-q", "--detach", f.base);
+    f.git("merge", "-q", "--no-edit", pinned);
+    const manifest = { ...f.manifest };
+    const pin = (commit: string) =>
+      f.commit(
+        "fork-sync.json",
+        JSON.stringify({
+          ...manifest,
+          upstream: { ...manifest.upstream, commit },
+        }),
+      );
+    const base = pin(pinned);
+    f.git("checkout", "-q", "--detach", pinned);
+    const release = f.commit("CHANGELOG.md", "## 0.2.0\n\n## 0.1.0\n");
+    f.git("update-ref", "refs/remotes/upstream/main", release);
+    f.git("checkout", "-q", "--detach", base);
+    f.git("merge", "-q", "--no-edit", release);
+    const check = (head: string) =>
+      spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-eo", "pipefail", "-c", step],
+        {
+          cwd: f.dir,
+          env: { ...f.env, BASE_SHA: base, HEAD_SHA: head },
+          encoding: "utf8",
+        },
+      );
+    return { ...f, base, release, pin, check };
+  }
+
+  it("accepts generated files that exactly match the pinned trusted upstream commit", () => {
+    const f = guardFixture();
+    const result = f.check(f.pin(f.release));
+    expect(result.status, result.stderr).toBe(0);
+  });
+  it("rejects a hand edit layered on an otherwise valid sync", () => {
+    const f = guardFixture();
+    f.pin(f.release);
+    const result = f.check(f.commit("CHANGELOG.md", "## 0.2.0 edited\n"));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it("rejects a pin that trusted upstream main does not contain", () => {
+    const f = guardFixture();
+    f.git("update-ref", "refs/remotes/upstream/main", f.upstream);
+    const result = f.check(f.pin(f.release));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it("rejects a generated-file change when the pin is not advanced", () => {
+    const f = guardFixture();
+    const result = f.check(f.git("rev-parse", "HEAD"));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+});
