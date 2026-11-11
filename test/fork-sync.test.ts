@@ -1,6 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -208,9 +207,6 @@ function publicationFixture() {
   const f = fixture();
   const head = JSON.parse(f.run().stdout).head;
   const stateFile = join(f.dir, "remote-state.json");
-  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-  const bin = join(f.dir, "bin");
-  mkdirSync(bin);
   const state: any = {
     base: f.base,
     upstream: f.upstream,
@@ -221,42 +217,39 @@ function publicationFixture() {
     apiFailure: false,
     pushFailure: false,
   };
-  const gitShim = join(bin, "git");
-  writeFileSync(
-    gitShim,
-    `#!${process.execPath}
-import fs from 'node:fs';
-import cp from 'node:child_process';
-const file = ${JSON.stringify(stateFile)};
-const state = JSON.parse(fs.readFileSync(file, 'utf8'));
-const args = process.argv.slice(2);
-if (args[0] === '-c') args.splice(0, 2);
-if (args[0] === 'ls-remote') {
-  const ref = args.at(-1);
-  const commit = ref === 'refs/heads/main' ? (args[2].includes('kunchenguid') ? state.upstream : state.base) : state.branchHead;
-  if (commit) process.stdout.write(commit + '\\t' + ref + '\\n');
-} else if (args[0] === 'fetch') {
-  // All fixture objects already exist; never use the network.
-} else if (args[0] === 'push') {
-  state.writes.push({kind: 'push', args});
-  fs.writeFileSync(file, JSON.stringify(state));
-  if (state.pushFailure) { process.stderr.write(process.env.GH_TOKEN); process.exit(1); }
-  state.branchHead = args.at(-1).split(':')[0];
-  if (state.moveAfterPush) state.base = state.upstream;
-  fs.writeFileSync(file, JSON.stringify(state));
-} else {
-  const result = cp.spawnSync(${JSON.stringify(realGit)}, args, {stdio: 'inherit'});
-  process.exit(result.status ?? 1);
-}
-`,
-  );
-  chmodSync(gitShim, 0o700);
   const apiShim = join(f.dir, "api-shim.mjs");
   writeFileSync(
     apiShim,
     `
 import fs from 'node:fs';
+import cp from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 const file = ${JSON.stringify(stateFile)};
+const realExecFileSync = cp.execFileSync;
+cp.execFileSync = (command, originalArgs, options) => {
+  const args = [...originalArgs];
+  if (args[0] === '-c') args.splice(0, 2);
+  if (command !== 'git' || !['ls-remote', 'fetch', 'push'].includes(args[0])) {
+    return realExecFileSync(command, originalArgs, options);
+  }
+  const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (args[0] === 'ls-remote') {
+    const ref = args.at(-1);
+    const commit = ref === 'refs/heads/main' ? (args[2].includes('kunchenguid') ? state.upstream : state.base) : state.branchHead;
+    return commit ? commit + '\\t' + ref + '\\n' : '';
+  }
+  if (args[0] === 'push') {
+    state.writes.push({kind: 'push', args});
+    fs.writeFileSync(file, JSON.stringify(state));
+    if (state.pushFailure) throw new Error(process.env.GH_TOKEN);
+    state.branchHead = args.at(-1).split(':')[0];
+    if (state.moveAfterPush) state.base = state.upstream;
+    fs.writeFileSync(file, JSON.stringify(state));
+  }
+  // All fixture objects already exist; fetch never uses the network.
+  return '';
+};
+syncBuiltinESMExports();
 globalThis.fetch = async (url, options) => {
   const state = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (url === 'https://api.github.com/repos/davidtandoh/quota-axi') return Response.json({full_name:'davidtandoh/quota-axi', parent:{full_name:'kunchenguid/quota-axi'}, default_branch:'main', allow_merge_commit:true});
@@ -300,7 +293,6 @@ globalThis.fetch = async (url, options) => {
         encoding: "utf8",
         env: {
           ...f.env,
-          PATH: `${bin}:${process.env.PATH}`,
           GH_TOKEN: "synthetic-token-never-print",
           GITHUB_REPOSITORY: "davidtandoh/quota-axi",
           GITHUB_REF: "refs/heads/main",
