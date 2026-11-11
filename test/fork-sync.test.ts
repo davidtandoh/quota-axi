@@ -479,17 +479,17 @@ describe("generated-file guard on upstream syncs", () => {
     f.git("update-ref", "refs/remotes/upstream/main", release);
     f.git("checkout", "-q", "--detach", base);
     f.git("merge", "-q", "--no-edit", release);
-    const check = (head: string) =>
+    const check = (head: string, baseSha = base) =>
       spawnSync(
         "bash",
         ["--noprofile", "--norc", "-eo", "pipefail", "-c", step],
         {
           cwd: f.dir,
-          env: { ...f.env, BASE_SHA: base, HEAD_SHA: head },
+          env: { ...f.env, BASE_SHA: baseSha, HEAD_SHA: head },
           encoding: "utf8",
         },
       );
-    return { ...f, base, release, pin, check };
+    return { ...f, base, pinned, release, pin, check };
   }
 
   it("accepts generated files that exactly match the pinned trusted upstream commit", () => {
@@ -508,6 +508,14 @@ describe("generated-file guard on upstream syncs", () => {
     const f = guardFixture();
     f.git("update-ref", "refs/remotes/upstream/main", f.upstream);
     const result = f.check(f.pin(f.release));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it("rejects rolling generated files back to an older pinned upstream release", () => {
+    const f = guardFixture();
+    const synced = f.pin(f.release);
+    f.commit("CHANGELOG.md", "## 0.1.0\n");
+    const result = f.check(f.pin(f.pinned), synced);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("modifies release-please-generated files");
   });
