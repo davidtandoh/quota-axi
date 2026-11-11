@@ -3,7 +3,7 @@
   "upstream": {
     "repository": "kunchenguid/quota-axi",
     "branch": "main",
-    "commit": "4368dbf4d621b0deb9c1432c7daa56ead219d7c1"
+    "commit": "5734c41eee52eb9a80ba67f47269ebc06c0c41fc"
   },
   "patches": [
     {
@@ -41,6 +41,7 @@
       "paths": [
         ".github/workflows/ci.yml",
         ".github/workflows/fork-sync.yml",
+        ".github/workflows/guard-generated-files.yml",
         "scripts/fork-sync.mjs",
         "test/fork-sync.test.ts",
         "docs/fork-sync.md"

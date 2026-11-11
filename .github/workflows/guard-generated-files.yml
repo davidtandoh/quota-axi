@@ -36,6 +36,12 @@ jobs:
           # reflects exactly what GitHub shows as "Files changed".
           fetch-depth: 0
 
+      # This fork merges upstream main, which carries upstream's own
+      # release-please output. Fetch it from the fixed upstream URL so the check
+      # below can prove such bytes came from upstream instead of a hand edit.
+      - name: Fetch trusted upstream main
+        run: git fetch --no-tags https://github.com/kunchenguid/quota-axi.git +refs/heads/main:refs/remotes/upstream/main
+
       - name: Check PR does not modify release-please-generated files
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -44,6 +50,26 @@ jobs:
           set -eu
           files=$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")
 
+          # An upstream sync may carry generated files only byte-for-byte as the
+          # upstream commit pinned in fork-sync.json, and only when that commit is
+          # both in this PR's history and on trusted upstream main, and strictly
+          # advances the base branch's pin so stale upstream output is rejected.
+          # A pin counts only from a regular-file manifest that names the same
+          # repository and branch fetched above.
+          pin_of() {
+            case "$(git ls-tree "$1" -- fork-sync.json)" in "100644 blob "*) ;; *) return 0 ;; esac
+            git show "$1:fork-sync.json" | jq -r 'select(.upstream.repository == "kunchenguid/quota-axi" and .upstream.branch == "main") | .upstream.commit // empty' 2>/dev/null || true
+          }
+          pin=$(pin_of "$HEAD_SHA")
+          base_pin=$(pin_of "$BASE_SHA")
+          if ! printf '%s' "$pin" | grep -qxE '[0-9a-f]{40}' ||
+            [ "$pin" = "$base_pin" ] ||
+            ! git merge-base --is-ancestor "$base_pin" "$pin" 2>/dev/null ||
+            ! git merge-base --is-ancestor "$pin" "$HEAD_SHA" 2>/dev/null ||
+            ! git merge-base --is-ancestor "$pin" refs/remotes/upstream/main 2>/dev/null; then
+            pin=""
+          fi
+
           violated=""
           for path in CHANGELOG.md .release-please-manifest.json; do
             if printf '%s\n' "$files" | grep -qxF -- "$path"; then
@@ -51,6 +77,14 @@ jobs:
               # A PR that creates it for the first time (e.g. wiring up
               # release-please) is not hand-editing bot-owned content.
               if git cat-file -e "${BASE_SHA}:${path}" 2>/dev/null; then
+                # Only a regular file matches, so a sync cannot delete it or
+                # replace it with a symlink.
+                head_entry=$(git ls-tree "$HEAD_SHA" -- "$path")
+                if [ -n "$pin" ] && [ "${head_entry#100644 blob }" != "$head_entry" ] &&
+                  [ "$head_entry" = "$(git ls-tree "$pin" -- "$path")" ]; then
+                  echo "${path} matches pinned upstream ${pin}. OK."
+                  continue
+                fi
                 violated="${violated} ${path}"
               fi
             fi

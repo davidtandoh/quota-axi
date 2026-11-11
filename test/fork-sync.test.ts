@@ -1,10 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -208,9 +208,6 @@ function publicationFixture() {
   const f = fixture();
   const head = JSON.parse(f.run().stdout).head;
   const stateFile = join(f.dir, "remote-state.json");
-  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-  const bin = join(f.dir, "bin");
-  mkdirSync(bin);
   const state: any = {
     base: f.base,
     upstream: f.upstream,
@@ -221,42 +218,39 @@ function publicationFixture() {
     apiFailure: false,
     pushFailure: false,
   };
-  const gitShim = join(bin, "git");
-  writeFileSync(
-    gitShim,
-    `#!${process.execPath}
-import fs from 'node:fs';
-import cp from 'node:child_process';
-const file = ${JSON.stringify(stateFile)};
-const state = JSON.parse(fs.readFileSync(file, 'utf8'));
-const args = process.argv.slice(2);
-if (args[0] === '-c') args.splice(0, 2);
-if (args[0] === 'ls-remote') {
-  const ref = args.at(-1);
-  const commit = ref === 'refs/heads/main' ? (args[2].includes('kunchenguid') ? state.upstream : state.base) : state.branchHead;
-  if (commit) process.stdout.write(commit + '\\t' + ref + '\\n');
-} else if (args[0] === 'fetch') {
-  // All fixture objects already exist; never use the network.
-} else if (args[0] === 'push') {
-  state.writes.push({kind: 'push', args});
-  fs.writeFileSync(file, JSON.stringify(state));
-  if (state.pushFailure) { process.stderr.write(process.env.GH_TOKEN); process.exit(1); }
-  state.branchHead = args.at(-1).split(':')[0];
-  if (state.moveAfterPush) state.base = state.upstream;
-  fs.writeFileSync(file, JSON.stringify(state));
-} else {
-  const result = cp.spawnSync(${JSON.stringify(realGit)}, args, {stdio: 'inherit'});
-  process.exit(result.status ?? 1);
-}
-`,
-  );
-  chmodSync(gitShim, 0o700);
   const apiShim = join(f.dir, "api-shim.mjs");
   writeFileSync(
     apiShim,
     `
 import fs from 'node:fs';
+import cp from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 const file = ${JSON.stringify(stateFile)};
+const realExecFileSync = cp.execFileSync;
+cp.execFileSync = (command, originalArgs, options) => {
+  const args = [...originalArgs];
+  if (args[0] === '-c') args.splice(0, 2);
+  if (command !== 'git' || !['ls-remote', 'fetch', 'push'].includes(args[0])) {
+    return realExecFileSync(command, originalArgs, options);
+  }
+  const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (args[0] === 'ls-remote') {
+    const ref = args.at(-1);
+    const commit = ref === 'refs/heads/main' ? (args[2].includes('kunchenguid') ? state.upstream : state.base) : state.branchHead;
+    return commit ? commit + '\\t' + ref + '\\n' : '';
+  }
+  if (args[0] === 'push') {
+    state.writes.push({kind: 'push', args});
+    fs.writeFileSync(file, JSON.stringify(state));
+    if (state.pushFailure) throw new Error(process.env.GH_TOKEN);
+    state.branchHead = args.at(-1).split(':')[0];
+    if (state.moveAfterPush) state.base = state.upstream;
+    fs.writeFileSync(file, JSON.stringify(state));
+  }
+  // All fixture objects already exist; fetch never uses the network.
+  return '';
+};
+syncBuiltinESMExports();
 globalThis.fetch = async (url, options) => {
   const state = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (url === 'https://api.github.com/repos/davidtandoh/quota-axi') return Response.json({full_name:'davidtandoh/quota-axi', parent:{full_name:'kunchenguid/quota-axi'}, default_branch:'main', allow_merge_commit:true});
@@ -300,7 +294,6 @@ globalThis.fetch = async (url, options) => {
         encoding: "utf8",
         env: {
           ...f.env,
-          PATH: `${bin}:${process.env.PATH}`,
           GH_TOKEN: "synthetic-token-never-print",
           GITHUB_REPOSITORY: "davidtandoh/quota-axi",
           GITHUB_REF: "refs/heads/main",
@@ -448,5 +441,138 @@ describe("fork sync workflow trust boundaries", () => {
     expect(ci.jobs["build-and-test"].steps[0].with["persist-credentials"]).toBe(
       false,
     );
+  });
+});
+
+describe("generated-file guard on upstream syncs", () => {
+  // Runs the workflow's own check step the way GitHub-hosted runners do, so the
+  // test exercises the shipped shell rather than a copy of its rule.
+  const step = (
+    load(
+      readFileSync(
+        join(root, ".github/workflows/guard-generated-files.yml"),
+        "utf8",
+      ),
+    ) as any
+  ).jobs.check.steps.find(
+    (s: any) =>
+      s.name === "Check PR does not modify release-please-generated files",
+  ).run as string;
+  function guardFixture() {
+    const f = fixture();
+    // Upstream release-please output at the pin, then a newer upstream release.
+    f.git("checkout", "-q", "--detach", f.pin);
+    const pinned = f.commit("CHANGELOG.md", "## 0.1.0\n");
+    f.git("checkout", "-q", "--detach", f.base);
+    f.git("merge", "-q", "--no-edit", pinned);
+    const manifest = { ...f.manifest };
+    const pin = (commit: string) =>
+      f.commit(
+        "fork-sync.json",
+        JSON.stringify({
+          ...manifest,
+          upstream: { ...manifest.upstream, commit },
+        }),
+      );
+    const base = pin(pinned);
+    f.git("checkout", "-q", "--detach", pinned);
+    const release = f.commit("CHANGELOG.md", "## 0.2.0\n\n## 0.1.0\n");
+    f.git("update-ref", "refs/remotes/upstream/main", release);
+    f.git("checkout", "-q", "--detach", base);
+    f.git("merge", "-q", "--no-edit", release);
+    const check = (head: string, baseSha = base) =>
+      spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-eo", "pipefail", "-c", step],
+        {
+          cwd: f.dir,
+          env: { ...f.env, BASE_SHA: baseSha, HEAD_SHA: head },
+          encoding: "utf8",
+        },
+      );
+    return { ...f, base, pinned, release, pin, check };
+  }
+
+  it("accepts generated files that exactly match the pinned trusted upstream commit", () => {
+    const f = guardFixture();
+    const result = f.check(f.pin(f.release));
+    expect(result.status, result.stderr).toBe(0);
+  });
+  it("rejects a hand edit layered on an otherwise valid sync", () => {
+    const f = guardFixture();
+    f.pin(f.release);
+    const result = f.check(f.commit("CHANGELOG.md", "## 0.2.0 edited\n"));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it("rejects a pin that trusted upstream main does not contain", () => {
+    const f = guardFixture();
+    f.git("update-ref", "refs/remotes/upstream/main", f.upstream);
+    const result = f.check(f.pin(f.release));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it("rejects rolling generated files back to an older pinned upstream release", () => {
+    const f = guardFixture();
+    const synced = f.pin(f.release);
+    f.commit("CHANGELOG.md", "## 0.1.0\n");
+    const result = f.check(f.pin(f.pinned), synced);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it("rejects deleting a generated file even when the pinned upstream lacks it", () => {
+    const f = guardFixture();
+    f.git("checkout", "-q", "--detach", f.release);
+    f.git("rm", "-q", "--", "CHANGELOG.md");
+    f.git("commit", "-qm", "test: Delete changelog upstream");
+    const deleted = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", deleted);
+    f.git("checkout", "-q", "--detach", f.base);
+    f.git("merge", "-q", "--no-edit", deleted);
+    const result = f.check(f.pin(deleted));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it.each([
+    ["repository", { repository: "someone/quota-axi" }],
+    ["branch", { branch: "release" }],
+  ])(
+    "rejects a pin whose manifest names a different upstream %s",
+    (_, field) => {
+      const f = guardFixture();
+      const head = f.commit(
+        "fork-sync.json",
+        JSON.stringify({
+          ...f.manifest,
+          upstream: { ...f.manifest.upstream, ...field, commit: f.release },
+        }),
+      );
+      const result = f.check(head);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "modifies release-please-generated files",
+      );
+    },
+  );
+  it("rejects a generated file replaced by a symlink even when upstream has it", () => {
+    const f = guardFixture();
+    f.git("checkout", "-q", "--detach", f.release);
+    f.git("rm", "-q", "--", "CHANGELOG.md");
+    symlinkSync("shared.txt", join(f.dir, "CHANGELOG.md"));
+    f.git("add", "--", "CHANGELOG.md");
+    f.git("commit", "-qm", "test: Link changelog upstream");
+    const linked = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", linked);
+    f.git("checkout", "-q", "--detach", f.base);
+    f.git("merge", "-q", "--no-edit", linked);
+    const result = f.check(f.pin(linked));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
+  it("rejects a generated-file change when the pin is not advanced", () => {
+    const f = guardFixture();
+    const result = f.check(f.git("rev-parse", "HEAD"));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
   });
 });
