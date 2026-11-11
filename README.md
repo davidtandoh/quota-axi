@@ -707,6 +707,14 @@ The 2026-11-11 recheck used only that native profile's existing usage/profile
 GET requests. Neither an ordinary reset timestamp nor an opaque response field
 is evidence of an earned reset count. No additional account was probed.
 
+At pinned upstream 0.1.69, the [native parser](https://github.com/kunchenguid/quota-axi/blob/5734c41eee52eb9a80ba67f47269ebc06c0c41fc/src/providers/claude.ts),
+[profile selector](https://github.com/kunchenguid/quota-axi/blob/5734c41eee52eb9a80ba67f47269ebc06c0c41fc/src/providers/claude-accounts.ts)
+and [swap adapter](https://github.com/kunchenguid/quota-axi/blob/5734c41eee52eb9a80ba67f47269ebc06c0c41fc/src/providers/claude-swap.ts)
+normalize windows and account metadata without a verified inventory count.
+The bounded native usage/profile recheck did not establish one; unknown nested
+fields were not exhaustively inspected. The documented reset mechanics do not
+supply this account's balance.
+
 Inventory follows the reading's account and freshness. The normalized cache
 retains only the count, application and status/reason. Reused readings keep
 their observation time; stale counts are historical observations, not current
