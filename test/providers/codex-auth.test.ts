@@ -813,6 +813,34 @@ describe("Codex credential-state reporting", () => {
     );
   });
 
+  it("accepts a Business spend cap at the first endpoint without a fallback", async () => {
+    writePiAuth(piOauthEntry());
+    const body = readFileSync(
+      join(
+        import.meta.dirname,
+        "..",
+        "fixtures",
+        "codex",
+        "oauth-business-spend-control.json",
+      ),
+      "utf8",
+    );
+    const fetchMock = vi.fn(async () => new Response(body, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { fetchQuota } = await import("../../src/providers/codex.js");
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
+    expect(result.state.status).toBe("fresh");
+    expect(result.windows).toHaveLength(1);
+    expect(result.windows[0]?.id).toBe("spend_control");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://chatgpt.com/backend-api/wham/usage",
+    );
+  });
+
   it("preserves native Codex auth-file precedence over Pi OAuth", async () => {
     const nativeToken = jwt({ exp: Math.floor(Date.now() / 1000) + 3600 });
     writeAuth({

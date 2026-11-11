@@ -223,28 +223,31 @@ function publicationFixture() {
     apiShim,
     `
 import fs from 'node:fs';
-import childProcess from 'node:child_process';
+import cp from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 const file = ${JSON.stringify(stateFile)};
-const realExecFileSync = childProcess.execFileSync;
-childProcess.execFileSync = (command, rawArgs, options) => {
-  const args = rawArgs[0] === '-c' ? rawArgs.slice(2) : rawArgs;
+const realExecFileSync = cp.execFileSync;
+cp.execFileSync = (command, originalArgs, options) => {
+  const args = [...originalArgs];
+  if (args[0] === '-c') args.splice(0, 2);
   if (command !== 'git' || !['ls-remote', 'fetch', 'push'].includes(args[0])) {
-    return realExecFileSync(command, rawArgs, options);
+    return realExecFileSync(command, originalArgs, options);
   }
   const state = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (args[0] === 'ls-remote') {
     const ref = args.at(-1);
     const commit = ref === 'refs/heads/main' ? (args[2].includes('kunchenguid') ? state.upstream : state.base) : state.branchHead;
-    return commit ? commit + String.fromCharCode(9) + ref + String.fromCharCode(10) : '';
+    return commit ? commit + '\\t' + ref + '\\n' : '';
   }
-  if (args[0] === 'fetch') return '';
-  state.writes.push({kind: 'push', args});
-  fs.writeFileSync(file, JSON.stringify(state));
-  if (state.pushFailure) throw new Error(process.env.GH_TOKEN);
-  state.branchHead = args.at(-1).split(':')[0];
-  if (state.moveAfterPush) state.base = state.upstream;
-  fs.writeFileSync(file, JSON.stringify(state));
+  if (args[0] === 'push') {
+    state.writes.push({kind: 'push', args});
+    fs.writeFileSync(file, JSON.stringify(state));
+    if (state.pushFailure) throw new Error(process.env.GH_TOKEN);
+    state.branchHead = args.at(-1).split(':')[0];
+    if (state.moveAfterPush) state.base = state.upstream;
+    fs.writeFileSync(file, JSON.stringify(state));
+  }
+  // All fixture objects already exist; fetch never uses the network.
   return '';
 };
 syncBuiltinESMExports();

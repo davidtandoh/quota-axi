@@ -3,7 +3,7 @@
   "upstream": {
     "repository": "kunchenguid/quota-axi",
     "branch": "main",
-    "commit": "4368dbf4d621b0deb9c1432c7daa56ead219d7c1"
+    "commit": "5734c41eee52eb9a80ba67f47269ebc06c0c41fc"
   },
   "patches": [
     {
@@ -61,6 +61,8 @@
       "paths": [
         "src/limit-resets.ts",
         "src/providers/codex.ts",
+        "test/claude-profiles.test.ts",
+        "test/claude-swap.test.ts",
         "test/fixtures/codex/oauth-reset-inventory.json",
         "test/limit-resets.test.ts",
         "test/providers/codex-auth.test.ts"

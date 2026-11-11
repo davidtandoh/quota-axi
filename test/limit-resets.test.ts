@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readCachedProvider, writeCachedProviders } from "../src/cache.js";
 import { withQuotaSemantics } from "../src/interpretation.js";
+import { coalesceVerifiedSubscriptions } from "../src/providers/accounts.js";
 import {
   normalizeCodexUsage,
   mergeAccountAndLimits,
@@ -62,6 +63,43 @@ function response(provider = reading()): QuotaAxiResponse {
 }
 
 describe("earned limit-reset inventory", () => {
+  it.each([2, 0, undefined])(
+    "retains the winning subscription observation (%s) without summing inventory",
+    (count) => {
+      const first = {
+        ...reading(),
+        accountKey: "native",
+        accountKeys: ["native"],
+        account: { accountId: "same-subscription" },
+      };
+      first.limitResets =
+        count === undefined ? undefined : { ...known, availableCount: count };
+      const sibling = {
+        ...reading(),
+        accountKey: "pi",
+        accountKeys: ["pi"],
+        account: { accountId: "same-subscription" },
+        limitResets: { ...known, availableCount: 4 },
+      };
+      const distinct = {
+        ...reading(),
+        accountKey: "other",
+        accountKeys: ["other"],
+        account: { accountId: "different-subscription" },
+        limitResets: { ...known, availableCount: 7 },
+      };
+
+      const merged = coalesceVerifiedSubscriptions([first, sibling, distinct]);
+
+      expect(merged).toHaveLength(2);
+      expect(merged[0].accountKeys).toEqual(["native", "pi"]);
+      expect(merged[0].limitResets).toEqual(
+        count === undefined ? undefined : { ...known, availableCount: count },
+      );
+      expect(merged[1].limitResets).toEqual({ ...known, availableCount: 7 });
+    },
+  );
+
   it("reports the observed HTTP count separately from purchased credits", () => {
     expect(reading()).toMatchObject({
       limitResets: known,
