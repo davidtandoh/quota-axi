@@ -55,6 +55,16 @@ export function withQuotaSemantics(
   const semantics = semanticsFor(withWindows, generatedAt);
   return {
     ...withWindows,
+    ...((provider.provider === "codex" || provider.provider === "claude") &&
+    provider.state.status === "fresh" &&
+    !provider.state.stale
+      ? {
+          limitResets: provider.limitResets ?? {
+            status: "unmeasurable" as const,
+            reason: "not_reported" as const,
+          },
+        }
+      : {}),
     state: { ...provider.state, ...supersededSources(provider) },
     quotaSemantics: provider.state.stale
       ? staleSemantics(semantics)

@@ -27,6 +27,7 @@ import type {
   QuotaWindow,
 } from "./types.js";
 import { PROVIDER_IDS } from "./types.js";
+import { normalizeLimitResetInventory } from "./limit-resets.js";
 
 const PROVIDER_SOURCES = [
   "oauth",
@@ -705,6 +706,7 @@ function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
       plan: provider.plan,
       windows: provider.windows,
       credits: provider.credits,
+      limitResets: provider.limitResets,
       state: {
         status: provider.state.status,
         stale: false,
@@ -867,6 +869,8 @@ function normalizeCachedProvider(
   if (untrustedWindowIds)
     snapshot.state.untrustedWindowIds = untrustedWindowIds;
   if (credits) snapshot.credits = credits;
+  if (data.limitResets !== undefined)
+    snapshot.limitResets = normalizeLimitResetInventory(data.limitResets);
   const credentialContext = stringValue(data.credentialContext);
   const reuse = normalizeReuseStamp(data.reuse);
   return {

@@ -286,6 +286,19 @@ export type ProviderAccount = {
   inspectAuth(options: ProviderOptions): Promise<AuthProviderReport>;
 };
 
+/** Observed earned-reset inventory, separate from usage-credit balances. */
+export type LimitResetInventory =
+  | {
+      status: "known";
+      availableCount: number;
+      /** A reset requires an explicit action; it is not usable runway yet. */
+      application: "on_demand";
+    }
+  | {
+      status: "unmeasurable";
+      reason: "not_reported" | "invalid_inventory";
+    };
+
 export type ProviderQuota = {
   provider: ProviderId;
   /** Present in account-expanded reports; absent for the legacy single lane. */
@@ -310,6 +323,8 @@ export type ProviderQuota = {
   };
   windows: QuotaWindow[];
   quotaSemantics?: QuotaSemantics;
+  /** As observed at state.refreshedAt; never added to quota-window economics. */
+  limitResets?: LimitResetInventory;
   credits?: {
     remaining?: number;
     unlimited?: boolean;

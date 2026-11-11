@@ -1,6 +1,12 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -127,6 +133,38 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("Codex credential-state reporting", () => {
+  it("carries reset inventory through the read-only profile collector", async () => {
+    writeAuth({ tokens: { access_token: jwt({ exp: 4_000_000_000 }) } });
+    const body = readFileSync(
+      join(import.meta.dirname, "../fixtures/codex/oauth-reset-inventory.json"),
+      "utf8",
+    );
+    const fetchMock = vi.fn(async () => new Response(body, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { fetchQuota } = await import("../../src/providers/codex.js");
+
+    const report = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+      credentialMode: "profile-only",
+    });
+
+    expect(report).toMatchObject({
+      state: { status: "fresh", stale: false },
+      limitResets: {
+        status: "known",
+        availableCount: 2,
+        application: "on_demand",
+      },
+      attempts: [{ source: "oauth", status: "success" }],
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://chatgpt.com/backend-api/wham/usage",
+      expect.any(Object),
+    );
+  });
+
   it("uses the configured absolute executable for auth inspection and RPC fallback", async () => {
     const binary = join(tempDir!, "pinned", "codex");
     process.env.QUOTA_AXI_CODEX_BINARY = binary;

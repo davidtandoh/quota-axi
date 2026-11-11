@@ -845,6 +845,14 @@ function staleAge(
 
 function cardNotes(provider: ProviderQuota, generatedAtMs: number): string[] {
   const notes: string[] = [];
+  if (provider.limitResets) {
+    const inventory = provider.limitResets;
+    notes.push(
+      inventory.status === "known"
+        ? `limit resets: ${inventory.availableCount} ${provider.state.stale ? "last observed" : "available"} · on demand`
+        : "limit resets: unmeasurable",
+    );
+  }
   if (provider.state.status === "stale") {
     notes.push(
       `last refreshed ${staleAge(provider.state.refreshedAt, generatedAtMs)}`,

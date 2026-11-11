@@ -606,7 +606,7 @@ describe("CLI quota rendering", () => {
     // The remedy rides the stale provider's `attention[]` row, and the stale
     // scope gets no `quota[]` row at all.
     expect(output).toContain(
-      "attention[2]{provider,scope,kind,detail,remedy}:",
+      "attention[3]{provider,scope,kind,detail,remedy}:",
     );
     expect(output).toContain(
       'claude,all,stale,"last refreshed 2026-07-06T18:10:00Z · keychain_prompt_required · reason keychain_access_required",quota-axi --allow-keychain-prompt',
@@ -1181,7 +1181,22 @@ describe("CLI quota rendering", () => {
     expect(compact).toContain(
       'codex,all_models,258720,"2026-07-18T11:52:00.000Z",weekly',
     );
-    expect(compact).toContain("attention[0]:");
+    expect(toonRows(compact, "attention")).toEqual([
+      [
+        "claude",
+        "limit_resets",
+        "unmeasurable",
+        "reset inventory not reported by supported usage surface",
+        "none",
+      ],
+      [
+        "codex",
+        "limit_resets",
+        "unmeasurable",
+        "reset inventory not reported by supported usage surface",
+        "none",
+      ],
+    ]);
     expect(compact).not.toContain("windows[");
     expect(compact).not.toContain("worstReserve");
 
@@ -2031,9 +2046,16 @@ describe("default TOON decision blocks", () => {
       "1 provider not set up is omitted; run `quota-axi --full` to list it",
     );
     expect(output).not.toContain("elevenlabs");
-    expect(toonRows(output, "attention").map((row) => row[0])).toEqual(
-      Object.keys(PROVIDERS).filter((id) => id !== "elevenlabs"),
-    );
+    expect(
+      toonRows(output, "attention")
+        .filter((row) => row[1] === "limit_resets")
+        .map((row) => row[0]),
+    ).toEqual(["claude", "codex"]);
+    expect(
+      toonRows(output, "attention")
+        .filter((row) => row[1] === "all")
+        .map((row) => row[0]),
+    ).toEqual(Object.keys(PROVIDERS).filter((id) => id !== "elevenlabs"));
     expect(process.exitCode).toBeUndefined();
   });
 

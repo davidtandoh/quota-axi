@@ -161,9 +161,29 @@ function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
       ...providerAttention(provider, measured, scopeAttention.length),
     );
     blocks.attention.push(...shareRows(provider));
+    blocks.attention.push(...limitResetRows(provider));
     blocks.attention.push(...scopeAttention);
   }
   return blocks;
+}
+
+function limitResetRows(provider: ProviderQuota): AttentionRow[] {
+  const inventory = provider.limitResets;
+  if (!inventory) return [];
+  const known = inventory.status === "known";
+  return [
+    {
+      ...providerColumns(provider),
+      scope: "limit_resets",
+      kind: known ? "limit_resets" : "unmeasurable",
+      detail: known
+        ? `${provider.state.stale ? "last observed" : "available"} ${inventory.availableCount}${DETAIL_SEPARATOR}on demand${DETAIL_SEPARATOR}excluded from runway + spendPriority`
+        : inventory.reason === "not_reported"
+          ? "reset inventory not reported by supported usage surface"
+          : "reset inventory invalid in usage observation",
+      remedy: NONE,
+    },
+  ];
 }
 
 function quotaRow(

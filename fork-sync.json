@@ -54,6 +54,17 @@
         "src/render.ts",
         "test/kiro-stale-cache.test.ts"
       ]
+    },
+    {
+      "id": "earned-limit-resets",
+      "anchor": "b36e5e032e8102e23846279cf967f5564db1dbff",
+      "paths": [
+        "src/limit-resets.ts",
+        "src/providers/codex.ts",
+        "test/fixtures/codex/oauth-reset-inventory.json",
+        "test/limit-resets.test.ts",
+        "test/providers/codex-auth.test.ts"
+      ]
     }
   ]
 }

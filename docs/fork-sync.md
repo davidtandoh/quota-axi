@@ -33,6 +33,8 @@ the combined implementation.
 - The synchronization implementation, anchored to its starting fork main.
 - The shared files the Kiro stale-cache fix added to the fork delta, anchored
   to that fix's merge into main.
+- The earned-limit-reset parser and regression paths, anchored to the accepted
+  main before that change. Shared integration files keep their existing owners.
 
 The initial pin is `4368dbf4d621b0deb9c1432c7daa56ead219d7c1`. The initial fork
 base is `9d10f077e69ec18c2bddd55821e6e81621831af0`. This version synchronizes
