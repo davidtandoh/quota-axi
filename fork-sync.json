@@ -41,6 +41,7 @@
       "paths": [
         ".github/workflows/ci.yml",
         ".github/workflows/fork-sync.yml",
+        ".github/workflows/guard-generated-files.yml",
         "scripts/fork-sync.mjs",
         "test/fork-sync.test.ts",
         "docs/fork-sync.md"
