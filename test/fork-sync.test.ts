@@ -519,6 +519,19 @@ describe("generated-file guard on upstream syncs", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("modifies release-please-generated files");
   });
+  it("rejects deleting a generated file even when the pinned upstream lacks it", () => {
+    const f = guardFixture();
+    f.git("checkout", "-q", "--detach", f.release);
+    f.git("rm", "-q", "--", "CHANGELOG.md");
+    f.git("commit", "-qm", "test: Delete changelog upstream");
+    const deleted = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", deleted);
+    f.git("checkout", "-q", "--detach", f.base);
+    f.git("merge", "-q", "--no-edit", deleted);
+    const result = f.check(f.pin(deleted));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modifies release-please-generated files");
+  });
   it("rejects a generated-file change when the pin is not advanced", () => {
     const f = guardFixture();
     const result = f.check(f.git("rev-parse", "HEAD"));

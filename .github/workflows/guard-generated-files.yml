@@ -71,8 +71,10 @@ jobs:
               # A PR that creates it for the first time (e.g. wiring up
               # release-please) is not hand-editing bot-owned content.
               if git cat-file -e "${BASE_SHA}:${path}" 2>/dev/null; then
-                if [ -n "$pin" ] &&
-                  [ "$(git ls-tree "$HEAD_SHA" -- "$path")" = "$(git ls-tree "$pin" -- "$path")" ]; then
+                # A missing file never matches, so a sync cannot delete it.
+                head_entry=$(git ls-tree "$HEAD_SHA" -- "$path")
+                if [ -n "$pin" ] && [ -n "$head_entry" ] &&
+                  [ "$head_entry" = "$(git ls-tree "$pin" -- "$path")" ]; then
                   echo "${path} matches pinned upstream ${pin}. OK."
                   continue
                 fi
