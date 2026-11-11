@@ -165,6 +165,46 @@ describe("Codex credential-state reporting", () => {
     );
   });
 
+  it("falls back to the next endpoint when the first reports only reset inventory", async () => {
+    writeAuth({ tokens: { access_token: jwt({ exp: 4_000_000_000 }) } });
+    const body = readFileSync(
+      join(import.meta.dirname, "../fixtures/codex/oauth-reset-inventory.json"),
+      "utf8",
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            rate_limit: null,
+            rate_limit_reset_credits: { available_count: 0 },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(body, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { fetchQuota } = await import("../../src/providers/codex.js");
+
+    const report = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+      credentialMode: "profile-only",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "https://chatgpt.com/backend-api/codex/usage",
+      expect.any(Object),
+    );
+    expect(report.state).toMatchObject({ status: "fresh", stale: false });
+    expect(report.windows.length).toBeGreaterThan(0);
+    expect(report.limitResets).toMatchObject({
+      status: "known",
+      availableCount: 2,
+    });
+  });
+
   it("uses the configured absolute executable for auth inspection and RPC fallback", async () => {
     const binary = join(tempDir!, "pinned", "codex");
     process.env.QUOTA_AXI_CODEX_BINARY = binary;

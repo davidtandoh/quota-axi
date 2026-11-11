@@ -57,7 +57,8 @@ export function withQuotaSemantics(
     ...withWindows,
     ...((provider.provider === "codex" || provider.provider === "claude") &&
     provider.state.status === "fresh" &&
-    !provider.state.stale
+    !provider.state.stale &&
+    !provider.state.reused
       ? {
           limitResets: provider.limitResets ?? {
             status: "unmeasurable" as const,

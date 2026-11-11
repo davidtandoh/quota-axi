@@ -160,21 +160,38 @@ describe("earned limit-reset inventory", () => {
   );
 
   it.each([0, 2])(
-    "reports inventory %s even without a quota window",
+    "does not treat inventory %s without a quota window as a reading",
     (count) => {
       expect(
         normalizeCodexUsage({
+          rate_limit: null,
           rate_limit_reset_credits: { available_count: count },
         }),
-      ).toMatchObject({
-        windows: [],
-        limitResets: { ...known, availableCount: count },
-      });
+      ).toBeUndefined();
       expect(
-        normalizeCodexUsage({ credits: { balance: 100 } }),
+        normalizeCodexUsage({
+          rateLimitResetCredits: { availableCount: count },
+        }),
       ).toBeUndefined();
     },
   );
+
+  it("does not label a reused legacy snapshot as not reported", () => {
+    const legacy = reading();
+    delete legacy.limitResets;
+    legacy.state = { ...legacy.state, reused: true };
+    expect(withQuotaSemantics(legacy, NOW)).not.toHaveProperty("limitResets");
+
+    const measured = reading({
+      ...fixture,
+      rate_limit_reset_credits: { available_count: 0 },
+    });
+    measured.state = { ...measured.state, reused: true };
+    expect(withQuotaSemantics(measured, NOW).limitResets).toEqual({
+      ...known,
+      availableCount: 0,
+    });
+  });
 
   it.each(["session", "weekly"])(
     "keeps the %s bound and economics unchanged for on-demand inventory",

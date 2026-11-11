@@ -1123,6 +1123,8 @@ export function normalizeCodexUsage(
     ...collectNamedRateLimitWindows(data),
   ]);
 
+  if (windows.length === 0) return undefined;
+
   // HTTP observation: rate_limit_reset_credits.available_count. The official
   // app-server read exposes rateLimitResetCredits.availableCount. Detail rows
   // may be capped and do not establish which quota windows a reset restores.
@@ -1141,7 +1143,6 @@ export function normalizeCodexUsage(
             : objectValue(rawResets)?.availableCount,
         },
   );
-  if (windows.length === 0 && limitResets.status !== "known") return undefined;
 
   return {
     plan: stringValue(data.plan_type) ?? stringValue(data.planType),
