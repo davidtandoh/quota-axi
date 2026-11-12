@@ -202,8 +202,9 @@ describe("fork sync candidate", () => {
   });
 });
 
-// All publication I/O stays in this synthetic repository. The shim refuses
-// unknown network calls rather than falling through to a live endpoint.
+// Mock remote Git and HTTP in the publication child. Local Git stays real:
+// a Node executable shim for every local Git read dominated fixture runtime.
+// The HTTP mock rejects unknown requests instead of contacting a live endpoint.
 function publicationFixture() {
   const f = fixture();
   const head = JSON.parse(f.run().stdout).head;

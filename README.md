@@ -589,21 +589,26 @@ A `quota[]` row whose `runway` is `projected_exhaustion` or `exhausted_now` has 
 
 `attention[]` kinds:
 
-| `kind`                                                  | `scope` | Meaning                                                                                                                                                                                                                                                           |
-| ------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stale`                                                 | `all`   | The report is stale diagnostic data. `detail` names the last refresh, `fetch failed` plus `state.error` when a usage fetch failed, and any `state.reason`; no scope gets a `quota[]` row.                                                                         |
-| `auth_required`, `rate_limited`, `unavailable`, `error` | `all`   | The provider state status. `detail` is `state.error`, any `state.reason`, plus the retry-after instant when `state.retryAfter` is set.                                                                                                                            |
-| `no_quota`                                              | `all`   | The provider reported no measurable scope and no raw credit balance. Emitted when nothing else names it or when needed to preserve `state.authStatus`.                                                                                                            |
-| `credits`                                               | `all`   | The provider reported a raw credit balance but no measurable scope. `detail` states that balance verbatim; no percentage or bound is derived from it.                                                                                                             |
-| `jobs`                                                  | `all`   | A PHI-safe sample of vendor job outcomes. `detail` is `sampled N · completed N · failed N · other N`. JSON also carries structured `jobs.{sampled,completed,failed,other}`.                                                                                       |
-| `unresolved_windows`                                    | `all`   | `quotaSemantics.unresolvedWindowIds`: unfamiliar vendor windows not folded into any bound.                                                                                                                                                                        |
-| `untrusted_windows`                                     | `all`   | `state.untrustedWindowIds`: limits that could not be parsed authoritatively.                                                                                                                                                                                      |
-| `share`                                                 | `all`   | A window is a used-share of another window, not an independent allowance. `detail` is `<id> of <parent>` plus ` · <percentUsed>` when that figure is present. It bounds no scope.                                                                                 |
-| `headroom_unknown`                                      | scope   | The scope reports no effective percentage for a reason other than a bound conflict. `detail` names the windows that block it and any finite runway verdict with its limiting window.                                                                              |
-| `bound_conflict`                                        | scope   | A window the scope only inherits reads zero while the scope's own windows still report allowance. `detail` names both sides. The scope gets no `quota[]` row and no `exhaustion[]` row.                                                                           |
-| `unmeasurable`                                          | scope   | Headroom is known but a bound blocks `runway`, `spendPriority`, or both. `detail` names which.                                                                                                                                                                    |
-| `degraded_source`                                       | `all`   | A source was broken or unreadable while a sibling source answered: a superseded credential source, or Higgsfield's failed auxiliary `account transactions` / `generate list` read. `detail` is `<source> · <error>`. One row per source, only on a fresh reading. |
-| `reused`                                                | `all`   | A fresh reading was reused instead of asking the vendor again. `detail` is `last refreshed <refreshedAt>`. See [Fresh reuse](#fresh-reuse).                                                                                                                       |
+| `kind`                                                  | `scope`        | Meaning                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stale`                                                 | `all`          | The report is stale diagnostic data. `detail` names the last refresh, `fetch failed` plus `state.error` when a usage fetch failed, and any `state.reason`; no scope gets a `quota[]` row.                                                                         |
+| `auth_required`, `rate_limited`, `unavailable`, `error` | `all`          | The provider state status. `detail` is `state.error`, any `state.reason`, plus the retry-after instant when `state.retryAfter` is set.                                                                                                                            |
+| `no_quota`                                              | `all`          | The provider reported no measurable scope and no raw credit balance. Emitted when nothing else names it or when needed to preserve `state.authStatus`.                                                                                                            |
+| `credits`                                               | `all`          | The provider reported a raw credit balance but no measurable scope. `detail` states that balance verbatim; no percentage or bound is derived from it.                                                                                                             |
+| `jobs`                                                  | `all`          | A PHI-safe sample of vendor job outcomes. `detail` is `sampled N · completed N · failed N · other N`. JSON also carries structured `jobs.{sampled,completed,failed,other}`.                                                                                       |
+| `unresolved_windows`                                    | `all`          | `quotaSemantics.unresolvedWindowIds`: unfamiliar vendor windows not folded into any bound.                                                                                                                                                                        |
+| `untrusted_windows`                                     | `all`          | `state.untrustedWindowIds`: limits that could not be parsed authoritatively.                                                                                                                                                                                      |
+| `share`                                                 | `all`          | A window is a used-share of another window, not an independent allowance. `detail` is `<id> of <parent>` plus ` · <percentUsed>` when that figure is present. It bounds no scope.                                                                                 |
+| `headroom_unknown`                                      | scope          | The scope reports no effective percentage for a reason other than a bound conflict. `detail` names the windows that block it and any finite runway verdict with its limiting window.                                                                              |
+| `bound_conflict`                                        | scope          | A window the scope only inherits reads zero while the scope's own windows still report allowance. `detail` names both sides. The scope gets no `quota[]` row and no `exhaustion[]` row.                                                                           |
+| `unmeasurable`                                          | scope          | Headroom is known but a bound blocks `runway`, `spendPriority`, or both. `detail` names which.                                                                                                                                                                    |
+| `degraded_source`                                       | `all`          | A source was broken or unreadable while a sibling source answered: a superseded credential source, or Higgsfield's failed auxiliary `account transactions` / `generate list` read. `detail` is `<source> · <error>`. One row per source, only on a fresh reading. |
+| `reused`                                                | `all`          | A fresh reading was reused instead of asking the vendor again. `detail` is `last refreshed <refreshedAt>`. See [Fresh reuse](#fresh-reuse).                                                                                                                       |
+| `limit_resets`                                          | `limit_resets` | Observed earned-reset count, including zero. On-demand inventory is excluded from runway and spendPriority. Stale counts say `last observed`.                                                                                                                     |
+
+An `unmeasurable` attention row with scope `limit_resets` means reset inventory
+was not reported by the supported usage surface or its count was invalid.
+It does not make the provider's ordinary quota windows unmeasurable.
 
 `remedy` carries `state.remedyCommand` when one exists, and situational agent-directed advice is still prepended to `help`.
 
@@ -644,15 +649,79 @@ Everything a consumer branches on stays in the default tier: `accountKey` and `a
 
 ### Quota report shape
 
-| Object                        | Fields                                                                                                                                                                                  |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Quota report                  | `providers`                                                                                                                                                                             |
-| Provider report               | `provider`, optional `accountKey`, `accountKeys` (every quota row), `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, optional `jobs`, and optional `notSetUp` |
-| Provider report with `--full` | Also `label`, `source`, optional `account` identity, optional `accountLocator`, and per-source `attempts`                                                                               |
-| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                                                     |
+| Object                        | Fields                                                                                                                                                                                                          |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quota report                  | `providers`                                                                                                                                                                                                     |
+| Provider report               | `provider`, optional `accountKey`, `accountKeys` (every quota row), `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, optional `jobs`, optional `limitResets`, and optional `notSetUp` |
+| Provider report with `--full` | Also `label`, `source`, optional `account` identity, optional `accountLocator`, and per-source `attempts`                                                                                                       |
+| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                                                                             |
 
 Account identity and per-source `attempts` are omitted unless `--full` is passed.
 Claude `identityStatus` is `verified` only when Anthropic returns an authoritative account identifier; `email` and `organization` are display-only and must not be used for duplicate detection.
+
+### Earned limit resets
+
+Codex and Claude readings can include an additive `limitResets` field in both
+JSON tiers. Known inventory has this shape:
+
+```json
+{ "status": "known", "availableCount": 2, "application": "on_demand" }
+```
+
+`availableCount: 0` is a measured zero. Unavailable inventory has
+`{ "status": "unmeasurable", "reason": "not_reported" }`; an invalid count uses
+`invalid_inventory`. Neither carries a count. A missing field means inventory
+was not collected, for example in an older cached snapshot. No count is
+inferred from a plan, purchased credits, or ordinary window resets.
+
+As verified on 2026-11-11, Codex's existing HTTP usage response exposes
+`rate_limit_reset_credits.available_count`. Its existing app-server fallback
+exposes `rateLimitResetCredits.availableCount`, documented in
+[Codex App Server](https://learn.chatgpt.com/docs/app-server). The count is
+authoritative even when optional detail rows are absent or capped. quota-axi
+reports the count only. It does not report an expiry or restored amount from
+that count. The observed HTTP inventory supplies neither. Optional RPC detail
+expiry dates do not establish a deadline for the whole inventory.
+
+Earned resets require an explicit redemption. quota-axi never redeems them.
+`effectivePercentRemaining`, runway and spendPriority describe the observed
+quota windows and exclude on-demand inventory. A later quota read observes
+any reset the user has applied. No reset count is multiplied into capacity,
+and simultaneous binding windows retain their existing bounds.
+
+Claude documents [on-demand limit resets](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset),
+including session, weekly and Fable resets with different restoration rules.
+No inventory field with verified semantics has been established in its
+supported usage response. Claude inventory is therefore `unmeasurable` with
+reason `not_reported`; this does not assert that the account has no resets.
+Promotional allocations and plan names do not establish an account count.
+
+The 0.1.69 Claude profile lanes select credential stores and reuse the same
+OAuth usage parser; profile identity and subscription coalescing do not add
+reset inventory. The opt-in claude-swap path maps `cswap list --json` usage
+percentages and reset timestamps into session and weekly windows. No inventory
+field with verified semantics is established in that supported contract either.
+`--no-credential-refresh` disables live claude-swap discovery because its list
+command can refresh credentials. Native `--profile-only` bypasses discovery.
+The 2026-11-11 recheck used only that native profile's existing usage/profile
+GET requests. Neither an ordinary reset timestamp nor an opaque response field
+is evidence of an earned reset count. No additional account was probed.
+
+At pinned upstream 0.1.69, the [native parser](https://github.com/kunchenguid/quota-axi/blob/5734c41eee52eb9a80ba67f47269ebc06c0c41fc/src/providers/claude.ts),
+[profile selector](https://github.com/kunchenguid/quota-axi/blob/5734c41eee52eb9a80ba67f47269ebc06c0c41fc/src/providers/claude-accounts.ts)
+and [swap adapter](https://github.com/kunchenguid/quota-axi/blob/5734c41eee52eb9a80ba67f47269ebc06c0c41fc/src/providers/claude-swap.ts)
+normalize windows and account metadata without a verified inventory count.
+The bounded native usage/profile recheck did not establish one; unknown nested
+fields were not exhaustively inspected. The documented reset mechanics do not
+supply this account's balance.
+
+Inventory follows the reading's account and freshness. The normalized cache
+retains only the count, application and status/reason. Reused readings keep
+their observation time; stale counts are historical observations, not current
+availability. Default TOON carries inventory in `attention[]`, and the TUI
+adds a note to the provider card. The public and cache schema versions do not
+change for this optional field. No separate history format or migration is
+introduced.
 
 ### Provider `state`
 

@@ -33,6 +33,8 @@ the combined implementation.
 - The synchronization implementation, anchored to its starting fork main.
 - The shared files the Kiro stale-cache fix added to the fork delta, anchored
   to that fix's merge into main.
+- The earned-limit-reset parser and regression paths, anchored to the accepted
+  main before that change. Shared integration files keep their existing owners.
 
 The initial pin is `4368dbf4d621b0deb9c1432c7daa56ead219d7c1`. The initial fork
 base is `9d10f077e69ec18c2bddd55821e6e81621831af0`. This version synchronizes
@@ -117,6 +119,9 @@ separate branch. The automation never resolves it by choosing one side.
 8. Check the current PR head and base against the recorded SHAs. Require normal
    PR CI, generated-file checks, review, and applicable branch requirements.
    The existing generated-file and no-mistakes bot exemptions remain unchanged.
+   The generated-file check accepts upstream release-please output only when
+   it matches the PR's advanced, upstream-proven pin byte for byte; see
+   [guard-generated-files.yml](../.github/workflows/guard-generated-files.yml).
    Do not fabricate a no-mistakes attestation. The normal human contribution
    contract remains in [CONTRIBUTING.md](../CONTRIBUTING.md).
 9. With separately recorded merge authority, use **Create a merge commit**.

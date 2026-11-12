@@ -242,6 +242,10 @@ describe.skipIf(process.platform === "win32")("claude-swap lanes", () => {
       ["five_hour=91", "seven_day=7"],
       ["five_hour=63", "seven_day=59"],
     ]);
+    expect(report.providers.map((provider) => provider.limitResets)).toEqual([
+      { status: "unmeasurable", reason: "not_reported" },
+      { status: "unmeasurable", reason: "not_reported" },
+    ]);
     expect(report.providers[0].windows[0].resetsAt).toBe(
       "2026-10-14T18:00:00.431135+00:00",
     );

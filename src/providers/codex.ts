@@ -10,6 +10,7 @@ import {
 } from "../cache.js";
 import { readJsonFileResult, type JsonFileReadResult } from "../lib/fs.js";
 import { providerFetch } from "../lib/http.js";
+import { normalizeLimitResetInventory } from "../limit-resets.js";
 import { findCommandPath, terminateChild } from "../lib/process.js";
 import { redactSecret } from "../lib/secret.js";
 import {
@@ -108,6 +109,7 @@ type NormalizedCodexQuota = {
   account?: ProviderQuota["account"];
   windows: QuotaWindow[];
   credits?: ProviderQuota["credits"];
+  limitResets: NonNullable<ProviderQuota["limitResets"]>;
   refreshedAt: string;
 };
 
@@ -861,6 +863,7 @@ function codexSuccessReport(
     account: quota.account,
     windows: quota.windows,
     credits: quota.credits,
+    limitResets: quota.limitResets,
     refreshedAt: quota.refreshedAt,
     sourcesTried: sourceNames(attempts),
     attempts,
@@ -1087,15 +1090,9 @@ function piInspectionSource(
   };
 }
 
-export function normalizeCodexUsage(raw: unknown):
-  | {
-      plan?: string;
-      account?: ProviderQuota["account"];
-      windows: QuotaWindow[];
-      credits?: ProviderQuota["credits"];
-      refreshedAt: string;
-    }
-  | undefined {
+export function normalizeCodexUsage(
+  raw: unknown,
+): NormalizedCodexQuota | undefined {
   // Both the direct ChatGPT backend calls and the codex app-server RPC
   // describe the same rate-limit concepts, but the RPC surface uses
   // camelCase field names while the HTTP backend uses snake_case; both
@@ -1129,6 +1126,25 @@ export function normalizeCodexUsage(raw: unknown):
 
   if (windows.length === 0) return undefined;
 
+  // HTTP observation: rate_limit_reset_credits.available_count. The official
+  // app-server read exposes rateLimitResetCredits.availableCount. Detail rows
+  // may be capped and do not establish which quota windows a reset restores.
+  const snakeResets = "rate_limit_reset_credits" in data;
+  const rawResets = snakeResets
+    ? data.rate_limit_reset_credits
+    : data.rateLimitResetCredits;
+  const limitResets = normalizeLimitResetInventory(
+    rawResets === undefined || rawResets === null
+      ? undefined
+      : {
+          status: "known",
+          application: "on_demand",
+          availableCount: snakeResets
+            ? objectValue(rawResets)?.available_count
+            : objectValue(rawResets)?.availableCount,
+        },
+  );
+
   return {
     plan: stringValue(data.plan_type) ?? stringValue(data.planType),
     account: {
@@ -1137,6 +1153,7 @@ export function normalizeCodexUsage(raw: unknown):
     },
     windows,
     credits: normalizeCredits(data.credits ?? rateLimit?.credits),
+    limitResets,
     refreshedAt: nowIso(),
   };
 }
@@ -1555,13 +1572,9 @@ function extractCredentialState(
   };
 }
 
-async function fetchOauthUsage(credentials: CodexCredentials): Promise<{
-  plan?: string;
-  account?: ProviderQuota["account"];
-  windows: QuotaWindow[];
-  credits?: ProviderQuota["credits"];
-  refreshedAt: string;
-}> {
+async function fetchOauthUsage(
+  credentials: CodexCredentials,
+): Promise<NormalizedCodexQuota> {
   let rejected = false;
   let lastError: unknown;
   for (const endpoint of ENDPOINTS) {
@@ -1605,13 +1618,7 @@ async function fetchOauthUsage(credentials: CodexCredentials): Promise<{
   throw new Error("Codex quota unavailable");
 }
 
-async function probeCodexCli(): Promise<{
-  plan?: string;
-  account?: ProviderQuota["account"];
-  windows: QuotaWindow[];
-  credits?: ProviderQuota["credits"];
-  refreshedAt: string;
-}> {
+async function probeCodexCli(): Promise<NormalizedCodexQuota> {
   const binary = await resolveCodexBinary();
   if (binary.status === "missing") {
     throw new CodexCliUnavailableError(codexBinaryErrorMessage(binary));

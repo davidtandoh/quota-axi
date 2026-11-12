@@ -277,6 +277,11 @@ describe("opt-in Claude profile lanes", () => {
     const first = response(await command(["--json"]));
     expect(first.schemaVersion).toBe(6);
     expect(first.providers).toHaveLength(3);
+    expect(first.providers.map((provider) => provider.limitResets)).toEqual([
+      { status: "unmeasurable", reason: "not_reported" },
+      { status: "unmeasurable", reason: "not_reported" },
+      { status: "unmeasurable", reason: "not_reported" },
+    ]);
     expect(remaining(JSON.stringify(first))).toEqual(
       ["synthetic-personal", "synthetic-work", "synthetic-team"].map(
         (token) => 100 - usedPercent(token),
